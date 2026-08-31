@@ -1,16 +1,23 @@
 #!/usr/bin/env bun
 
-import { createHash } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
+import { constants } from "node:fs"
 import {
-  copyFile,
+  chmod,
+  link,
   lstat,
   mkdir,
+  mkdtemp,
+  open,
   readdir,
   readFile,
+  readlink,
   realpath,
-  writeFile,
+  rm,
+  rmdir,
+  unlink,
 } from "node:fs/promises"
-import { basename, join, relative, resolve, sep } from "node:path"
+import { basename, dirname, join, relative, resolve, sep } from "node:path"
 import {
   decodeStrictJson,
   type JsonValue,
@@ -25,6 +32,15 @@ const REPOSITORY_ROOT = resolve(import.meta.dir, "..")
 const MAX_MANIFEST_BYTES = 1024 * 1024
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/u
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u
+const GATE_ARGV = ["./scripts/local-gate.sh"] as const
+const INTERNAL_STATE_ARGUMENT = "--internal-state"
+const INTERNAL_TOKEN_ENV = "FMX_PROVIDER_INTERNAL_TOKEN"
+const ROOT_OUTPUT_ENTRIES = [
+  "artifacts",
+  "generation-receipt.json",
+  "local-gate.log",
+  "phase0-provider.json",
+] as const
 
 const usage = `Usage: scripts/generate-agentworkplace-provider.ts \\
   --output <existing-empty-directory> \\
@@ -162,7 +178,71 @@ interface ParsedArguments {
 
 interface GateResult {
   readonly actualSkipDescriptions: readonly string[]
+  readonly environment: Readonly<Record<string, string>>
   readonly exitStatus: number
+  readonly logBytes: Uint8Array
+  readonly stderr: Uint8Array
+  readonly stdout: Uint8Array
+}
+
+interface FileIdentity {
+  readonly device: string
+  readonly inode: string
+}
+
+interface WorktreeLocation {
+  readonly physicalPath: string
+  readonly reportedPath: string
+}
+
+interface RepositorySnapshot {
+  readonly commonDirectory: string
+  readonly commonDirectoryIdentity: FileIdentity
+  readonly gateScriptDigest: string
+  readonly generatorScriptDigest: string
+  readonly headRef: string | null
+  readonly headSha: string
+  readonly headTree: string
+  readonly indexDigest: string
+  readonly objectFormat: "sha1" | "sha256"
+  readonly root: string
+  readonly rootIdentity: FileIdentity
+  readonly trackedTreeDigest: string
+  readonly worktrees: readonly WorktreeLocation[]
+}
+
+interface OutputDirectorySnapshot {
+  readonly identity: FileIdentity
+  readonly physicalPath: string
+  readonly requestedPath: string
+}
+
+interface OwnedManifestSnapshot {
+  readonly contractDigest: string
+  readonly identity: FileIdentity
+  readonly manifestDigest: string
+  readonly physicalPath: string
+  readonly requestedPath: string
+}
+
+interface BootstrapState {
+  readonly agentworkplaceManifest: OwnedManifestSnapshot
+  readonly bootstrapDependencyInstall: {
+    readonly argv: readonly string[]
+    readonly cwd: string
+    readonly environment: Readonly<Record<string, string>>
+    readonly exitStatus: 0
+  }
+  readonly invocation: {
+    readonly argv: readonly string[]
+    readonly cwd: string
+  }
+  readonly materializedRoot: string
+  readonly output: OutputDirectorySnapshot
+  readonly schemaVersion: 1
+  readonly sourceRepository: RepositorySnapshot
+  readonly stagingRoot: string
+  readonly tokenDigest: string
 }
 
 interface ArtifactRecord {
