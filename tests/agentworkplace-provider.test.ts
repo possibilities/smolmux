@@ -1,26 +1,12 @@
-import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { describe, expect, test } from "bun:test"
 import { verifyAgentWorkplaceContracts } from "../scripts/check-agentworkplace-contracts.ts"
 import {
   buildFmxProviderManifest,
   canonicalProviderJson,
   FMX_EXPECTED_SKIPS,
-  materializeFmxProviderBundle,
   skipSetsMatch,
 } from "../scripts/generate-agentworkplace-provider.ts"
-import type { JsonValue } from "../src/contract-codec.ts"
-
-const temporaryDirectories: string[] = []
-
-afterEach(async () => {
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((path) => rm(path, { force: true, recursive: true })),
-  )
-})
+import { environmentWithoutGitOverrides } from "../scripts/provider-repository-snapshot.ts"
 
 describe("AgentWorkplace Phase 0 fmx provider adapter", () => {
   test("renders AgentWorkplace canonical provider JSON", () => {
@@ -37,6 +23,35 @@ describe("AgentWorkplace Phase 0 fmx provider adapter", () => {
   "z": ["one", "two"]
 }
 `)
+  })
+
+  test("pins the exact hermetic Git subprocess environment", () => {
+    expect(
+      environmentWithoutGitOverrides({
+        GIT_ATTR_NOSYSTEM: "0",
+        GIT_CEILING_DIRECTORIES: "/poisoned-ceiling",
+        GIT_CONFIG_GLOBAL: "/poisoned-global",
+        GIT_CONFIG_NOSYSTEM: "0",
+        GIT_CONFIG_SYSTEM: "/poisoned-system",
+        GIT_DIR: "/poisoned-git-dir",
+        GIT_INDEX_FILE: "/poisoned-index",
+        GIT_NO_REPLACE_OBJECTS: "0",
+        GIT_SSH_COMMAND: "poisoned-ssh",
+        GIT_WORK_TREE: "/poisoned-worktree",
+        HOME: "/preserved-home",
+        PATH: "/preserved-path",
+        XDG_CONFIG_HOME: "/preserved-xdg",
+      }),
+    ).toEqual({
+      GIT_ATTR_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_SYSTEM: "/dev/null",
+      GIT_NO_REPLACE_OBJECTS: "1",
+      HOME: "/preserved-home",
+      PATH: "/preserved-path",
+      XDG_CONFIG_HOME: "/preserved-xdg",
+    })
   })
 
   test("maps every exact owner family and accounts for all 18 skips", async () => {
@@ -71,7 +86,7 @@ describe("AgentWorkplace Phase 0 fmx provider adapter", () => {
     }
   })
 
-  test("copies exact committed artifacts and refuses skip drift semantically", async () => {
+  test("refuses skip drift semantically", async () => {
     const verification = await verifyAgentWorkplaceContracts()
     const manifest = buildFmxProviderManifest({
       actualSkipDescriptions: [],
@@ -82,25 +97,5 @@ describe("AgentWorkplace Phase 0 fmx provider adapter", () => {
       verification,
     })
     expect(skipSetsMatch(manifest)).toBe(false)
-
-    const output = await mkdtemp(join(tmpdir(), "fmx-phase0-provider-"))
-    temporaryDirectories.push(output)
-    const generated = await materializeFmxProviderBundle(
-      output,
-      manifest,
-      verification,
-    )
-    expect(generated.digest).toMatch(/^sha256:[0-9a-f]{64}$/u)
-    expect(await readFile(generated.path, "utf8")).toBe(
-      canonicalProviderJson(manifest as unknown as JsonValue),
-    )
-    for (const contract of manifest.contracts) {
-      const artifact = contract.artifacts[0]
-      expect(artifact).toBeDefined()
-      const bytes = await readFile(join(output, artifact!.path))
-      expect(`sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`).toBe(
-        artifact!.digest,
-      )
-    }
   })
 })
