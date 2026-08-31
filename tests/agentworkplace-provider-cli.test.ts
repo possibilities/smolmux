@@ -603,6 +603,23 @@ describe("AgentWorkplace provider generator CLI", () => {
     expect(await readdir(output)).toEqual([])
   })
 
+  test("uses Git owner-execute semantics despite core.fileMode=false", async () => {
+    const fixture = await createFixture()
+    const output = join(fixture.root, "provider-output")
+    const gate = join(fixture.repository, "scripts/local-gate.sh")
+    await mkdir(output)
+    git(fixture.repository, ["config", "core.fileMode", "false"])
+    await chmod(gate, 0o455)
+    expect(git(fixture.repository, ["status", "--porcelain=v1"])).toBe("")
+
+    const result = await runGenerator(fixture, output)
+    expect(result.exitStatus).toBe(1)
+    expect(result.stderr).toContain(
+      "tracked fmx executable mode differs from HEAD: scripts/local-gate.sh",
+    )
+    expect(await readdir(output)).toEqual([])
+  })
+
   test("rejects the common Git directory and every registered Worktree", async () => {
     const fixture = await createFixture()
     const commonGitOutput = join(fixture.repository, ".git", "provider-output")

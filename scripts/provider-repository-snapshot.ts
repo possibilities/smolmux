@@ -203,7 +203,7 @@ async function verifyTrackedBytes(
         if (!before.isFile()) {
           throw new Error(`tracked fmx file changed type: ${entry.path}`)
         }
-        const executable = (before.mode & 0o111n) !== 0n
+        const executable = (before.mode & 0o100n) !== 0n
         if (executable !== (entry.mode === "100755")) {
           throw new Error(
             `tracked fmx executable mode differs from HEAD: ${entry.path}`,
