@@ -60,9 +60,12 @@ executable modes, and ordinary index flags to match one committed `HEAD` tree.
 It removes every inherited `GIT_*` variable, then reinstates only hermetic
 controls: replacement objects and system attributes are disabled, system
 configuration is disabled, and the global/system configuration paths are
-`/dev/null`. It repeats the complete repository check after the gate and before
-publication. The gate runs in a private detached materialization of that exact
-commit, not against mutable Worktree bytes. Its real status and exact 18
+`/dev/null`. Command-scope Git configuration also pins `core.attributesFile`
+and `core.excludesFile` to `/dev/null`, so default XDG attributes and ignores
+cannot alter inspection or checkout. It repeats the complete repository check
+after the gate and before publication. The gate runs in a private detached
+materialization of that exact commit, not against mutable Worktree bytes. Its
+real status and exact 18
 environment-gated general-suite skips are captured there; the materialization
 is checked again after the gate. Because the canonical install runs `bun link`,
 the generator restores a link that points into the materialization to the
@@ -78,7 +81,9 @@ inventory. Publication preserves the caller's output-directory identity,
 creates every destination exclusively without following a final symlink, and
 repeats identity, content, mode, digest, and inventory verification. A failure
 removes only entries whose recorded filesystem identities prove the generator
-created them.
+created them. Bun-link restoration, stage removal, and private-source removal
+are attempted independently; a cleanup failure is reported alongside, never in
+place of, the originating generation failure.
 
 The four owner fixtures remain byte-for-byte copies beside the provider
 manifest because provider artifacts are bundle-relative. The Runtime and

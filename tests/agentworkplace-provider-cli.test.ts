@@ -603,6 +603,95 @@ describe("AgentWorkplace provider generator CLI", () => {
     expect(await readdir(output)).toEqual([])
   })
 
+  test("overrides Git's default XDG excludes file", async () => {
+    const fixture = await createFixture()
+    const output = join(fixture.root, "provider-output")
+    const poisonedHome = join(fixture.root, "poisoned-home")
+    const poisonedXdg = join(fixture.root, "poisoned-xdg")
+    await mkdir(output)
+    await mkdir(poisonedHome)
+    await mkdir(join(poisonedXdg, "git"), { recursive: true })
+    await writeFile(join(poisonedXdg, "git/ignore"), "ambient-hidden\n")
+    await writeFile(
+      join(fixture.repository, "ambient-hidden"),
+      "the default XDG ignore must not hide this input\n",
+    )
+
+    const ambientEnvironment = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
+    )
+    const poisonedStatus = Bun.spawnSync({
+      cmd: ["git", "status", "--porcelain=v2", "--untracked-files=all"],
+      cwd: fixture.repository,
+      env: {
+        ...ambientEnvironment,
+        GIT_ATTR_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_SYSTEM: "/dev/null",
+        HOME: poisonedHome,
+        XDG_CONFIG_HOME: poisonedXdg,
+      },
+      stderr: "pipe",
+      stdout: "pipe",
+    })
+    expect(poisonedStatus.exitCode).toBe(0)
+    expect(poisonedStatus.stdout.byteLength).toBe(0)
+
+    const result = await runGenerator(fixture, output, {
+      HOME: poisonedHome,
+      XDG_CONFIG_HOME: poisonedXdg,
+    })
+    expect(result.exitStatus).toBe(1)
+    expect(result.stderr).toContain("integration Worktree is not clean")
+    expect(result.stderr).toContain("ambient-hidden")
+    expect(await readdir(output)).toEqual([])
+  })
+
+  test("overrides Git's default XDG attributes file", async () => {
+    const fixture = await createFixture()
+    const output = join(fixture.root, "provider-output")
+    const poisonedXdg = join(fixture.root, "poisoned-xdg")
+    const poisonedCheckout = join(fixture.root, "poisoned-checkout")
+    await mkdir(output)
+    await mkdir(join(poisonedXdg, "git"), { recursive: true })
+    await writeFile(join(poisonedXdg, "git/attributes"), "* text eol=crlf\n")
+
+    const ambientEnvironment = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
+    )
+    const poisonedClone = Bun.spawnSync({
+      cmd: [
+        "git",
+        "clone",
+        "--quiet",
+        "--no-local",
+        fixture.repository,
+        poisonedCheckout,
+      ],
+      env: {
+        ...ambientEnvironment,
+        GIT_ATTR_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_SYSTEM: "/dev/null",
+        XDG_CONFIG_HOME: poisonedXdg,
+      },
+      stderr: "pipe",
+      stdout: "pipe",
+    })
+    expect(poisonedClone.exitCode).toBe(0)
+    expect(await readFile(join(poisonedCheckout, "README.md"), "utf8")).toContain(
+      "\r\n",
+    )
+
+    const result = await runGenerator(fixture, output, {
+      XDG_CONFIG_HOME: poisonedXdg,
+    })
+    expect(result.exitStatus).toBe(0)
+    expect(summaryFrom(result.stdout).accepted).toBe(true)
+  })
+
   test("uses Git owner-execute semantics despite core.fileMode=false", async () => {
     const fixture = await createFixture()
     const output = join(fixture.root, "provider-output")
@@ -751,5 +840,86 @@ exit 9
     expect(await realpath(join(globalBin, "fmx-mcp"))).toBe(
       join(physicalRepository, "src/mcp.ts"),
     )
+  })
+
+  test("preserves the primary failure and still removes private source after restoration fails", async () => {
+    const fixture = await createFixture()
+    const output = join(fixture.root, "provider-output")
+    const isolatedHome = join(fixture.root, "home")
+    const isolatedBunInstall = join(isolatedHome, ".bun")
+    const fakeBin = join(fixture.root, "fake-bin")
+    const privateTmp = join(fixture.root, "tmp")
+    await mkdir(output)
+    await mkdir(fakeBin)
+    await mkdir(privateTmp)
+    await mkdir(join(isolatedBunInstall, "bin"), { recursive: true })
+    await mkdir(join(isolatedBunInstall, "install/global/node_modules"), {
+      recursive: true,
+    })
+    await writeFile(
+      join(isolatedBunInstall, "install/global/package.json"),
+      "{}\n",
+    )
+    await symlink(
+      "../install/global/node_modules/fmx/src/index.ts",
+      join(isolatedBunInstall, "bin/fmx"),
+    )
+    await symlink(
+      "../install/global/node_modules/fmx/src/mcp.ts",
+      join(isolatedBunInstall, "bin/fmx-mcp"),
+    )
+    const fakeBun = join(fakeBin, "bun")
+    await writeFile(
+      fakeBun,
+      `#!/bin/sh
+if [ "$1" = "pm" ] && [ "$2" = "bin" ] && [ "$3" = "-g" ]; then
+  exec "$FMX_PROVIDER_TEST_REAL_BUN" "$@"
+fi
+if [ "$1" = "link" ]; then
+  printf 'forced Bun link restoration failure\n' >&2
+  exit 93
+fi
+exec "$FMX_PROVIDER_TEST_REAL_BUN" "$@"
+`,
+    )
+    await chmod(fakeBun, 0o755)
+    await writeFile(
+      join(fixture.repository, "scripts/local-gate.sh"),
+      `#!/bin/sh
+set -eu
+ln -sfn "$PWD" "$BUN_INSTALL/install/global/node_modules/fmx"
+rm src/index.ts
+printf 'gate deliberately dirtied its private source\n'
+exit 9
+`,
+    )
+    git(fixture.repository, ["add", "scripts/local-gate.sh"])
+    git(fixture.repository, [
+      "commit",
+      "--quiet",
+      "-m",
+      "restoration failure cleanup fixture",
+    ])
+
+    const result = await runGenerator(fixture, output, {
+      BUN_INSTALL: isolatedBunInstall,
+      FMX_PROVIDER_TEST_REAL_BUN: process.execPath,
+      HOME: isolatedHome,
+      PATH: `${fakeBin}:${isolatedBunInstall}/bin:${process.env.PATH ?? ""}`,
+      TMPDIR: privateTmp,
+    })
+    expect(result.exitStatus).toBe(1)
+    expect(result.stderr).toContain(
+      "provider generation failed: fmx integration Worktree is not clean",
+    )
+    expect(result.stderr).toContain("src/index.ts")
+    expect(result.stderr).toContain("cleanup also failed")
+    expect(result.stderr).toContain("forced Bun link restoration failure")
+    expect(await readdir(output)).toEqual([])
+    expect(
+      (await readdir(privateTmp)).filter((name) =>
+        name.startsWith("fmx-phase0-provider-source-"),
+      ),
+    ).toEqual([])
   })
 })

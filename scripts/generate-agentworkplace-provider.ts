@@ -1256,7 +1256,13 @@ async function ensureBunExecutableSymlink(
 async function restoreBunLinkIfMaterialized(
   sourceRepository: string,
 ): Promise<boolean> {
-  const physicalSourceRepository = await realpath(sourceRepository)
+  const physicalSourceRepository = await realpath(sourceRepository).catch(
+    (error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
+      throw error
+    },
+  )
+  if (physicalSourceRepository === undefined) return false
   const bin = bunGlobalBin()
   const linkedExecutables = [join(bin, "fmx"), join(bin, "fmx-mcp")]
   const globalPackage = resolve(
@@ -1302,6 +1308,57 @@ async function restoreBunLinkIfMaterialized(
   return true
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+async function cleanupProviderGeneration(input: {
+  readonly sourceRepository: string
+  readonly sourceRoot: string
+  readonly sourceRootDevice: bigint
+  readonly sourceRootInode: bigint
+  readonly staged: StagedBundle | undefined
+}): Promise<void> {
+  const errors: unknown[] = []
+  try {
+    try {
+      await restoreBunLinkIfMaterialized(input.sourceRepository)
+    } catch (error) {
+      errors.push(error)
+    }
+  } finally {
+    try {
+      if (input.staged !== undefined) {
+        await removePrivateDirectory(
+          input.staged.directory,
+          input.staged.device,
+          input.staged.inode,
+          "provider stage",
+        )
+      }
+    } catch (error) {
+      errors.push(error)
+    } finally {
+      try {
+        await removePrivateDirectory(
+          input.sourceRoot,
+          input.sourceRootDevice,
+          input.sourceRootInode,
+          "provider source",
+        )
+      } catch (error) {
+        errors.push(error)
+      }
+    }
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(
+      errors,
+      `provider cleanup failed: ${errors.map(errorMessage).join("; ")}`,
+    )
+  }
+}
+
 async function main(): Promise<number> {
   const parsed = parseArguments(Bun.argv.slice(2))
   const repositorySnapshot = await captureCleanRepositorySnapshot(REPOSITORY_ROOT)
@@ -1323,6 +1380,8 @@ async function main(): Promise<number> {
         readonly verification: ContractVerification
       }
     | undefined
+  let generationFailed = false
+  let generationError: unknown
   try {
     const materializedSnapshot = await materializeRepositorySnapshot(
       repositorySnapshot,
@@ -1377,23 +1436,32 @@ async function main(): Promise<number> {
       staged,
       verification,
     }
-  } finally {
-    await restoreBunLinkIfMaterialized(sourceRepository)
-    if (staged !== undefined) {
-      await removePrivateDirectory(
-        staged.directory,
-        staged.device,
-        staged.inode,
-        "provider stage",
+  } catch (error) {
+    generationFailed = true
+    generationError = error
+  }
+  let cleanupError: unknown
+  try {
+    await cleanupProviderGeneration({
+      sourceRepository,
+      sourceRoot,
+      sourceRootDevice: sourceRootFacts.dev,
+      sourceRootInode: sourceRootFacts.ino,
+      staged,
+    })
+  } catch (error) {
+    cleanupError = error
+  }
+  if (generationFailed) {
+    if (cleanupError !== undefined) {
+      throw new AggregateError(
+        [generationError, cleanupError],
+        `provider generation failed: ${errorMessage(generationError)}; cleanup also failed: ${errorMessage(cleanupError)}`,
       )
     }
-    await removePrivateDirectory(
-      sourceRoot,
-      sourceRootFacts.dev,
-      sourceRootFacts.ino,
-      "provider source",
-    )
+    throw generationError
   }
+  if (cleanupError !== undefined) throw cleanupError
   if (result === undefined) throw new Error("provider generation ended without a result")
   process.stdout.write(
     `${JSON.stringify({

@@ -43,9 +43,14 @@ export function environmentWithoutGitOverrides(
   // invoking shell. The supported provider platforms are macOS and Linux, so
   // /dev/null is the explicit empty global/system configuration source.
   environment.GIT_ATTR_NOSYSTEM = "1"
+  environment.GIT_CONFIG_COUNT = "2"
   environment.GIT_CONFIG_GLOBAL = "/dev/null"
+  environment.GIT_CONFIG_KEY_0 = "core.attributesFile"
+  environment.GIT_CONFIG_KEY_1 = "core.excludesFile"
   environment.GIT_CONFIG_NOSYSTEM = "1"
   environment.GIT_CONFIG_SYSTEM = "/dev/null"
+  environment.GIT_CONFIG_VALUE_0 = "/dev/null"
+  environment.GIT_CONFIG_VALUE_1 = "/dev/null"
   environment.GIT_NO_REPLACE_OBJECTS = "1"
   return environment
 }
