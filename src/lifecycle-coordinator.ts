@@ -28,6 +28,8 @@ import {
   type ManagedLaunchRequest,
   type ManagedLaunchRetry,
   type ManagedLaunchStage,
+  type ManagedLaunchTerminalAcknowledgement,
+  type ManagedLaunchTerminalReceipt,
 } from "./managed-launch-contract.ts"
 import { createHash } from "node:crypto"
 import { encodeCanonicalJson, type JsonValue } from "./contract-codec.ts"
@@ -321,10 +323,18 @@ export class LifecycleCoordinator {
 
   /** Admit one additive existing-directory launch or exact outcome acknowledgement. */
   async acceptManaged(
-    message: ManagedLaunchRequest | ManagedLaunchAcknowledgement | ManagedLaunchRetry,
+    message:
+      | ManagedLaunchRequest
+      | ManagedLaunchAcknowledgement
+      | ManagedLaunchRetry
+      | ManagedLaunchTerminalAcknowledgement,
   ): Promise<void> {
     if (message.message_type === "outcome_acknowledgement") {
       await this.options.ledger.acknowledgeManagedOutcome(message)
+      return
+    }
+    if (message.message_type === "terminal_acknowledgement") {
+      await this.options.ledger.acknowledgeManagedTerminalReceipt(message)
       return
     }
     if (message.message_type === "retry_request") {
@@ -391,6 +401,13 @@ export class LifecycleCoordinator {
     await this.withAdmissionGate(ensureId, async () => {
       await this.options.ledger.retainManagedFxFinalReceipt(ensureId, receipt)
     })
+  }
+
+  retainManagedTerminalReceipt(
+    ensureId: string,
+    receipt: ManagedLaunchTerminalReceipt,
+  ): Promise<ManagedLaunchRecord> {
+    return this.options.ledger.retainManagedTerminalReceipt(ensureId, receipt)
   }
 
   /** Durable acknowledgement replay for Fx's final-receipt authority. */

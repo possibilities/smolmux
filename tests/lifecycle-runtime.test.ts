@@ -54,6 +54,8 @@ import {
   deriveManagedLaunchSourceDigest,
   parseManagedLaunchRequest,
   type ManagedLaunchRequest,
+  type ManagedLaunchTerminalAcknowledgement,
+  type ManagedLaunchTerminalReceipt,
 } from "../src/managed-launch-contract.ts"
 import type { ManagedAgentClaim, ManagedAgentInvocation } from "../src/multiplexer.ts"
 
@@ -419,6 +421,23 @@ describe("production lifecycle Runtime composition", () => {
 
       expect(harness.provider.recordedFinal).toEqual({ kind: "exited", code: 0 })
       expect(harness.provider.acknowledged).toHaveLength(1)
+      const terminal = harness.receipts.find(
+        (receipt) => receipt.message_type === "terminal_receipt",
+      ) as ManagedLaunchTerminalReceipt | undefined
+      expect(terminal).toMatchObject({
+        agent_id: request.agent_id,
+        attempt: 1,
+        ensure_digest: request.ensure_digest,
+        ensure_id: request.ensure_id,
+        launch_digest: request.launch_digest,
+        launch_id: request.launch_id,
+        retained_until_acknowledged: true,
+        fx_final_receipt: {
+          conversation_id: request.fx_conversation.resume_conversation_id,
+          outcome: { kind: "exited", code: 0 },
+        },
+      })
+      if (terminal === undefined) throw new Error("missing managed terminal receipt")
       const durable = await EnsureLifecycleLedger.open(harness.runtime.roots.ensure)
       expect(await durable.getManaged(request.ensure_id)).toMatchObject({
         fx_final: {
@@ -437,8 +456,68 @@ describe("production lifecycle Runtime composition", () => {
           },
           acknowledgement_applied: true,
         },
+        terminal: { receipt: terminal, acknowledgement: null },
+      })
+      const acknowledgement = managedTerminalAcknowledgement(terminal)
+      await harness.runtime.acceptManagedLaunch(acknowledgement)
+      expect(await durable.getManaged(request.ensure_id)).toMatchObject({
+        terminal: { receipt: terminal, acknowledgement },
       })
       expect(await durable.list()).toEqual([])
+    } finally {
+      await harness.runtime.close()
+    }
+  })
+
+  test("replays a durable managed terminal receipt after publisher absence and stops after acknowledgement", async () => {
+    const request = await managedRuntimeFixture("managed-terminal-replay")
+    const fixture = await lifecycleFixture(
+      "ensure-a",
+      "launch-a",
+      "managed-terminal-replay-carrier",
+    )
+    const harness = await runtimeHarness(fixture, {
+      bindPublisher: false,
+      preloadedManagedRequest: request,
+      pendingAdmissionRetryDelayMsForTests: 0,
+    })
+    try {
+      await harness.runtime.recover()
+      await waitFor(async () => {
+        const ledger = await EnsureLifecycleLedger.open(harness.runtime.roots.ensure)
+        return (await ledger.getManaged(request.ensure_id))?.stage === "fx_started"
+      })
+      const entry = harness.manifest.get(request.agent_id)
+      if (entry === null) throw new Error("managed Agent lost its Manifest claim")
+      await harness.runtime.beforeDefinitiveAgentForget(entry, { code: 0, signal: 0 })
+
+      const durable = await EnsureLifecycleLedger.open(harness.runtime.roots.ensure)
+      const retained = await durable.getManaged(request.ensure_id)
+      expect(retained?.terminal).toMatchObject({
+        receipt: { message_type: "terminal_receipt" },
+        acknowledgement: null,
+      })
+      expect(harness.receipts).toEqual([])
+
+      harness.runtime.bindReceiptPublisher((receipt) => {
+        harness.receipts.push(structuredClone(receipt))
+      })
+      await harness.runtime.recover()
+      const replayed = harness.receipts.find(
+        (receipt) => receipt.message_type === "terminal_receipt",
+      ) as ManagedLaunchTerminalReceipt | undefined
+      expect(replayed).toEqual(retained?.terminal.receipt ?? undefined)
+      if (replayed === undefined) throw new Error("terminal receipt did not replay")
+      await harness.runtime.acceptManagedLaunch(
+        managedTerminalAcknowledgement(replayed),
+      )
+      harness.receipts.length = 0
+      await harness.runtime.recover()
+      expect(
+        harness.receipts.filter(
+          (receipt) => receipt.message_type === "terminal_receipt",
+        ),
+      ).toEqual([])
     } finally {
       await harness.runtime.close()
     }
@@ -765,7 +844,10 @@ async function runtimeHarness(
   const options = {
     home,
     homeId: "lifecycle-runtime-test",
-    fmxSession: choices.fmxSession ?? fixture.ensure.fmx_session,
+    fmxSession:
+      choices.fmxSession ??
+      choices.preloadedManagedRequest?.fmx_session ??
+      fixture.ensure.fmx_session,
     agentDefaults: choices.agentDefaults,
     fxPath: "/resolved/fmx-fx",
     runtimeSocketPath,
@@ -1240,6 +1322,27 @@ async function lifecycleFixture(
     cleanup.cleanup_digest = deriveCleanupDigest(cleanup)
   }
   return { ensure, source, end, cleanup }
+}
+
+function managedTerminalAcknowledgement(
+  receipt: ManagedLaunchTerminalReceipt,
+): ManagedLaunchTerminalAcknowledgement {
+  return {
+    acknowledgement_id: `controller-terminal-ack-${receipt.ensure_id}`,
+    agent_id: receipt.agent_id,
+    attempt: receipt.attempt,
+    ensure_digest: receipt.ensure_digest,
+    ensure_id: receipt.ensure_id,
+    fmx_session: receipt.fmx_session,
+    launch_digest: receipt.launch_digest,
+    launch_id: receipt.launch_id,
+    message_type: "terminal_acknowledgement",
+    receipt_digest: receipt.receipt_digest,
+    receipt_id: receipt.receipt_id,
+    schema_id: "fmx.managed-launch",
+    schema_version: 1,
+    workplace_instance_id: receipt.workplace_instance_id,
+  }
 }
 
 async function managedRuntimeFixture(suffix: string): Promise<ManagedLaunchRequest> {

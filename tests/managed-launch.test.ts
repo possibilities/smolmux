@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { readFile, mkdtemp, realpath, rm } from "node:fs/promises"
+import { readFile, mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -11,6 +11,7 @@ import {
   deriveFxAdmissionDecisionDigest,
   deriveFxFinalReceiptDigest,
   EnsureLifecycleLedger,
+  recordPathFor,
   type FxAdmissionDecision,
   type FxFinalReceipt,
   type FxFinalReceiptAcknowledgement,
@@ -34,13 +35,17 @@ import {
   deriveManagedLaunchEnsureDigest,
   deriveManagedLaunchOutcomeDigest,
   deriveManagedLaunchSourceDigest,
+  deriveManagedLaunchTerminalReceiptDigest,
+  deriveManagedLaunchTerminalReceiptId,
   encodeManagedLaunchPayload,
   parseManagedLaunchOutcome,
   parseManagedLaunchRequest,
+  parseManagedLaunchTerminalReceipt,
   type ManagedLaunchAcknowledgement,
   type ManagedLaunchOutcome,
   type ManagedLaunchRequest,
   type ManagedLaunchRetry,
+  type ManagedLaunchTerminalReceipt,
 } from "../src/managed-launch-contract.ts"
 import type { FxWorkControlResult } from "../src/fx-work-control.ts"
 
@@ -104,9 +109,76 @@ describe("managed-launch v1 codec", () => {
       "semantic decision has an invalid digest",
     )
   })
+
+  test("binds a managed terminal receipt to the exact retained Fx finality", async () => {
+    const request = await managedRequest("terminal-codec")
+    const receipt = managedTerminalReceipt(request)
+    expect(parseManagedLaunchTerminalReceipt(receipt)).toEqual(receipt)
+    expect(decodeManagedLaunchPayload(encodeManagedLaunchPayload(receipt))).toEqual(
+      receipt,
+    )
+    expect(() =>
+      parseManagedLaunchTerminalReceipt({
+        ...receipt,
+        fx_final_receipt: {
+          ...receipt.fx_final_receipt,
+          launch_id: "changed-launch",
+        },
+      })
+    ).toThrow("launch correlation")
+    expect(() =>
+      parseManagedLaunchTerminalReceipt({
+        ...receipt,
+        receipt_digest: "f".repeat(64),
+      })
+    ).toThrow("invalid digest")
+  })
 })
 
 describe("managed-launch durable transaction", () => {
+  test("reads a schema-v4 managed record with an empty terminal transaction and upgrades it on the next write", async () => {
+    const root = await temporaryDirectory()
+    const ledger = await EnsureLifecycleLedger.open(join(root, "ensure"))
+    const request = await managedRequest("schema-v4-migration")
+    await ledger.claimManaged(request)
+
+    const path = recordPathFor(ledger.root, request.ensure_id)
+    const previous = JSON.parse(await readFile(path, "utf8")) as Record<
+      string,
+      JsonValue
+    >
+    previous.schema_version = 4
+    delete previous.terminal
+    await writeFile(
+      path,
+      Buffer.concat([
+        Buffer.from(encodeCanonicalJson(previous)),
+        Buffer.from("\n"),
+      ]),
+    )
+
+    const reopened = await EnsureLifecycleLedger.open(ledger.root)
+    expect(await reopened.getManaged(request.ensure_id)).toMatchObject({
+      schema_version: 5,
+      terminal: { receipt: null, acknowledgement: null },
+    })
+    await reopened.advanceManaged(request.ensure_id, {
+      kind: "directory_validated",
+      directory: request.workspace.directory,
+      repository: request.workspace.repository,
+      checkout_root: request.workspace.checkout_root,
+      head_commit: request.workspace.head_commit,
+    })
+    const upgraded = JSON.parse(await readFile(path, "utf8")) as Record<
+      string,
+      unknown
+    >
+    expect(upgraded).toMatchObject({
+      schema_version: 5,
+      terminal: { receipt: null, acknowledgement: null },
+    })
+  })
+
   test("survives a post-rename crash and retains an exact acknowledged outcome", async () => {
     const root = await temporaryDirectory()
     const request = await managedRequest("crash")
@@ -923,11 +995,9 @@ describe("managed-launch pending redrive holds the first initial-work delivery",
     await second.settled()
 
     // A fresh coordinator instance (the process-restart case) has no
-    // in-memory record of coordinator #1's held delivery — by design, this
-    // held cache is a same-runtime redrive optimization only, not a durable
-    // dedupe seam (Fx's own admission path is idempotent by launch identity
-    // across restarts; see the "resubmits the idempotent Work-control
-    // request" test above).
+    // in-memory record of coordinator #1's held delivery. By design, this
+    // cache prevents duplicates only during one Runtime lifetime; durable
+    // cross-process admission deduplication remains Fx's authority.
     expect(admitInitialCalls).toBe(2)
     expect(published).toHaveLength(1)
     expect(published[0]).toMatchObject({ status: "succeeded" })
@@ -1195,6 +1265,49 @@ function admissionDecision(
     ...decision,
     receipt_digest: deriveFxAdmissionDecisionDigest(decision),
   } as AdmittedFxAdmissionDecision
+}
+
+function managedTerminalReceipt(
+  request: ManagedLaunchRequest,
+): ManagedLaunchTerminalReceipt {
+  const finalReceiptWithoutDigest = {
+    schema_id: "fx.launch-admission-final",
+    schema_version: 1,
+    message_type: "final_receipt",
+    receipt_id: `fx-final-${request.ensure_id}`,
+    receipt_digest: "0".repeat(64),
+    launch_id: request.launch_id,
+    launch_digest: request.launch_digest,
+    admission_key: request.source.admission_key,
+    conversation_id: request.fx_conversation.resume_conversation_id!,
+    outcome: { kind: "exited", code: 0 },
+    observed_at: "2026-09-02T12:00:00.000Z",
+    retained_until_acknowledged: true,
+  } as FxFinalReceipt
+  const finalReceipt = {
+    ...finalReceiptWithoutDigest,
+    receipt_digest: deriveFxFinalReceiptDigest(finalReceiptWithoutDigest),
+  }
+  const receipt = {
+    schema_id: "fmx.managed-launch",
+    schema_version: 1,
+    message_type: "terminal_receipt",
+    receipt_id: "pending-terminal-receipt",
+    receipt_digest: "0".repeat(64),
+    workplace_instance_id: request.workplace_instance_id,
+    fmx_session: request.fmx_session,
+    ensure_id: request.ensure_id,
+    ensure_digest: request.ensure_digest,
+    launch_id: request.launch_id,
+    launch_digest: request.launch_digest,
+    agent_id: request.agent_id,
+    attempt: 1,
+    fx_final_receipt: finalReceipt,
+    retained_until_acknowledged: true,
+  } as ManagedLaunchTerminalReceipt
+  receipt.receipt_id = deriveManagedLaunchTerminalReceiptId(receipt)
+  receipt.receipt_digest = deriveManagedLaunchTerminalReceiptDigest(receipt)
+  return receipt
 }
 
 async function managedRequest(suffix: string): Promise<ManagedLaunchRequest> {

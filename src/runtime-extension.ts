@@ -31,10 +31,14 @@ import {
   parseManagedLaunchOutcome,
   parseManagedLaunchRequest,
   parseManagedLaunchRetry,
+  parseManagedLaunchTerminalAcknowledgement,
+  parseManagedLaunchTerminalReceipt,
   type ManagedLaunchAcknowledgement,
   type ManagedLaunchOutcome,
   type ManagedLaunchRequest,
   type ManagedLaunchRetry,
+  type ManagedLaunchTerminalAcknowledgement,
+  type ManagedLaunchTerminalReceipt,
 } from "./managed-launch-contract.ts"
 import type {
   RuntimeAssociationMessage,
@@ -136,6 +140,7 @@ export type RuntimeExtensionLifecycleInbound =
 export type RuntimeExtensionManagedLaunchInbound =
   | ManagedLaunchRequest
   | ManagedLaunchAcknowledgement
+  | ManagedLaunchTerminalAcknowledgement
   | ManagedLaunchRetry
 
 export type RuntimeExtensionState = "starting" | "ready" | "degraded" | "closing" | "closed"
@@ -427,6 +432,16 @@ export class RuntimeExtensionSupervisor {
     }
     this.assertManagedLaunchIdentity(outcome)
     await this.writeOrFail(generation, outcome)
+  }
+
+  /** Publish one retained managed terminal receipt until exact acknowledgement. */
+  async publishManagedLaunchTerminalReceipt(
+    receipt: ManagedLaunchTerminalReceipt,
+  ): Promise<void> {
+    const generation = this.requireReady()
+    const exact = parseManagedLaunchTerminalReceipt(receipt)
+    this.assertManagedLaunchIdentity(exact)
+    await this.writeOrFail(generation, exact)
   }
 
   /** Forward the one opaque human-only Recovery-card action and await its exact response. */
@@ -835,7 +850,8 @@ export class RuntimeExtensionSupervisor {
   private handleManagedLaunchMessage(
     generation: Generation,
     message: ManagedLaunchRequest | ManagedLaunchOutcome | ManagedLaunchAcknowledgement |
-      ManagedLaunchRetry,
+      ManagedLaunchRetry | ManagedLaunchTerminalReceipt |
+      ManagedLaunchTerminalAcknowledgement,
   ): void {
     if (generation.phase === "starting") {
       throw {
@@ -844,16 +860,21 @@ export class RuntimeExtensionSupervisor {
       } satisfies Failure
     }
     if (generation.phase !== "ready") return
-    if (message.message_type === "launch_outcome") {
+    if (
+      message.message_type === "launch_outcome" ||
+      message.message_type === "terminal_receipt"
+    ) {
       throw {
         code: "protocol_error",
-        message: "child sent launch_outcome in the extension-to-Runtime direction",
+        message: `child sent ${message.message_type} in the extension-to-Runtime direction`,
       } satisfies Failure
     }
     const exact = message.message_type === "launch_request"
       ? parseManagedLaunchRequest(message)
       : message.message_type === "retry_request"
       ? parseManagedLaunchRetry(message)
+      : message.message_type === "terminal_acknowledgement"
+      ? parseManagedLaunchTerminalAcknowledgement(message)
       : parseManagedLaunchAcknowledgement(message)
     this.assertManagedLaunchIdentity(exact)
     this.acceptManagedLaunchInbound(generation, exact)
@@ -981,7 +1002,8 @@ export class RuntimeExtensionSupervisor {
 
   private assertManagedLaunchIdentity(
     message: ManagedLaunchRequest | ManagedLaunchOutcome | ManagedLaunchAcknowledgement |
-      ManagedLaunchRetry,
+      ManagedLaunchRetry | ManagedLaunchTerminalReceipt |
+      ManagedLaunchTerminalAcknowledgement,
   ): void {
     if (message.workplace_instance_id !== this.startup.association.workplace_instance_id) {
       throw new RuntimeExtensionError(
@@ -1078,8 +1100,11 @@ export class RuntimeExtensionSupervisor {
         message: `child sent ${message.message_type} without a managed-launch handler`,
       } satisfies Failure
     }
-    const requestId = message.message_type === "outcome_acknowledgement" ? null : message.request_id
-    const inboundKey = message.message_type !== "outcome_acknowledgement"
+    const acknowledgement =
+      message.message_type === "outcome_acknowledgement" ||
+      message.message_type === "terminal_acknowledgement"
+    const requestId = acknowledgement ? null : message.request_id
+    const inboundKey = !acknowledgement
       ? message.request_id
       : `managed-acknowledgement/${message.acknowledgement_id}`
     const managedReplay = encodeCanonicalJson(message as unknown as JsonValue)

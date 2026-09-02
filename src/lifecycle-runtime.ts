@@ -78,6 +78,8 @@ import {
 } from "./lifecycle-coordinator.ts"
 import { readGitContext } from "./git-context.ts"
 import {
+  deriveManagedLaunchTerminalReceiptDigest,
+  deriveManagedLaunchTerminalReceiptId,
   managedLaunchSourceBytes,
   type ManagedLaunchAcknowledgement,
   type ManagedLaunchCause,
@@ -85,6 +87,8 @@ import {
   type ManagedLaunchRequest,
   type ManagedLaunchRetry,
   type ManagedLaunchStage,
+  type ManagedLaunchTerminalAcknowledgement,
+  type ManagedLaunchTerminalReceipt,
 } from "./managed-launch-contract.ts"
 import type {
   ManagedAgentClaim,
@@ -117,7 +121,10 @@ export type LifecycleRuntimeMultiplexer = {
 }
 
 export type LifecycleReceiptPublisher = (
-  receipt: RuntimeExtensionLifecycleReceipt | ManagedLaunchOutcome,
+  receipt:
+    | RuntimeExtensionLifecycleReceipt
+    | ManagedLaunchOutcome
+    | ManagedLaunchTerminalReceipt,
 ) => MaybePromise<void>
 
 export type LifecycleRuntimeRoots = {
@@ -314,7 +321,11 @@ export class LifecycleRuntime {
   }
 
   acceptManagedLaunch(
-    message: ManagedLaunchRequest | ManagedLaunchAcknowledgement | ManagedLaunchRetry,
+    message:
+      | ManagedLaunchRequest
+      | ManagedLaunchAcknowledgement
+      | ManagedLaunchRetry
+      | ManagedLaunchTerminalAcknowledgement,
     signal?: AbortSignal,
   ): Promise<void> {
     signal?.throwIfAborted()
@@ -1264,7 +1275,12 @@ export class LifecycleRuntime {
     const current = isManagedLifecycleRecord(record)
       ? await this.requireManagedEnsure(record.request.ensure_id)
       : await this.requireEnsure(record.request.ensure_id)
-    if (current.fx_final.acknowledgement_applied) return
+    if (current.fx_final.acknowledgement_applied) {
+      if (isManagedLifecycleRecord(current)) {
+        await this.publishManagedTerminal(current)
+      }
+      return
+    }
     const correlation = isManagedLifecycleRecord(current)
       ? managedCorrelationFor(current)
       : correlationFor(current)
@@ -1291,6 +1307,9 @@ export class LifecycleRuntime {
         : await this.requireEnsure(current.request.ensure_id)
       if (!retained.fx_final.acknowledgement_applied) {
         throw new Error(`Fx final receipt for ensure ${current.request.ensure_id} is not acknowledged`)
+      }
+      if (isManagedLifecycleRecord(retained)) {
+        await this.publishManagedTerminal(retained)
       }
       return
     }
@@ -1332,8 +1351,32 @@ export class LifecycleRuntime {
     })
   }
 
+  private async publishManagedTerminal(record: ManagedLaunchRecord): Promise<void> {
+    const finalReceipt = record.fx_final.receipt
+    if (finalReceipt === null || !record.fx_final.acknowledgement_applied) {
+      throw new Error(
+        `managed launch ${record.request.ensure_id} has no acknowledged Fx final receipt`,
+      )
+    }
+    const retained = await this.coordinator.retainManagedTerminalReceipt(
+      record.request.ensure_id,
+      managedTerminalReceipt(record, finalReceipt),
+    )
+    if (
+      retained.terminal.receipt !== null &&
+      retained.terminal.acknowledgement === null
+    ) {
+      await this.publish(retained.terminal.receipt)
+    }
+  }
+
   private async publish(
-    receipt: RuntimeExtensionLifecycleReceipt | EndReceipt | CleanupReceipt | ManagedLaunchOutcome,
+    receipt:
+      | RuntimeExtensionLifecycleReceipt
+      | EndReceipt
+      | CleanupReceipt
+      | ManagedLaunchOutcome
+      | ManagedLaunchTerminalReceipt,
   ): Promise<void> {
     if (this.closed) return
     const publish = this.receiptPublisher
@@ -1341,7 +1384,12 @@ export class LifecycleRuntime {
     // background effect before the host binds its publisher; leave that
     // receipt pending for the next recovery/replay pass.
     if (publish === null) return
-    await publish(receipt as RuntimeExtensionLifecycleReceipt | ManagedLaunchOutcome)
+    await publish(
+      receipt as
+        | RuntimeExtensionLifecycleReceipt
+        | ManagedLaunchOutcome
+        | ManagedLaunchTerminalReceipt,
+    )
   }
 
   private async replayEnsureReceipts(): Promise<void> {
@@ -1358,6 +1406,15 @@ export class LifecycleRuntime {
           acknowledgement.receipt_digest === receipt.receipt_digest
         )) continue
         await publish(receipt as RuntimeExtensionLifecycleReceipt)
+      }
+    }
+    for (const record of await this.ensureLedger.listManaged()) {
+      if (
+        record.fx_final.receipt !== null &&
+        record.fx_final.acknowledgement_applied &&
+        record.terminal.acknowledgement === null
+      ) {
+        await this.publishManagedTerminal(record)
       }
     }
   }
@@ -1490,7 +1547,7 @@ function correlationFor(record: EnsureLifecycleRecord) {
 function isManagedLifecycleRecord(
   record: LifecycleLedgerRecord,
 ): record is ManagedLaunchRecord {
-  return record.schema_version === 4
+  return "workspace" in record.request
 }
 
 function managedCorrelationFor(record: ManagedLaunchRecord) {
@@ -1581,6 +1638,32 @@ function exactFinalReceipt(
     ...structuredClone(receipt),
     message_type: "final_receipt",
   } as FxFinalReceipt
+}
+
+function managedTerminalReceipt(
+  record: ManagedLaunchRecord,
+  fxFinalReceipt: FxFinalReceipt,
+): ManagedLaunchTerminalReceipt {
+  const receipt = {
+    schema_id: "fmx.managed-launch",
+    schema_version: 1,
+    message_type: "terminal_receipt",
+    receipt_id: "pending-terminal-receipt",
+    receipt_digest: "0".repeat(64),
+    workplace_instance_id: record.request.workplace_instance_id,
+    fmx_session: record.request.fmx_session,
+    ensure_id: record.request.ensure_id,
+    ensure_digest: record.request.ensure_digest,
+    launch_id: record.request.launch_id,
+    launch_digest: record.request.launch_digest,
+    agent_id: record.request.agent_id,
+    attempt: record.attempt,
+    fx_final_receipt: structuredClone(fxFinalReceipt),
+    retained_until_acknowledged: true,
+  } as ManagedLaunchTerminalReceipt
+  receipt.receipt_id = deriveManagedLaunchTerminalReceiptId(receipt)
+  receipt.receipt_digest = deriveManagedLaunchTerminalReceiptDigest(receipt)
+  return receipt
 }
 
 function finalAcknowledgement(receipt: FxFinalReceipt): FxFinalReceiptAcknowledgement {

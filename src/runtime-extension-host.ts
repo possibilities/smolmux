@@ -20,7 +20,10 @@ import {
   type RuntimeExtensionSupervisorOptions,
 } from "./runtime-extension.ts"
 import type { RuntimeExtensionStartup } from "./runtime-startup.ts"
-import type { ManagedLaunchOutcome } from "./managed-launch-contract.ts"
+import type {
+  ManagedLaunchOutcome,
+  ManagedLaunchTerminalReceipt,
+} from "./managed-launch-contract.ts"
 
 const ERROR_MESSAGE_MAX_BYTES = 1024
 const SAFE_ERROR_CODE = /^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,127})$/u
@@ -44,11 +47,18 @@ type RuntimeExtensionHostCallbacks = Pick<
 
 function publishReceipt(
   host: RuntimeExtensionHost,
-  receipt: RuntimeExtensionLifecycleReceipt | ManagedLaunchOutcome,
+  receipt:
+    | RuntimeExtensionLifecycleReceipt
+    | ManagedLaunchOutcome
+    | ManagedLaunchTerminalReceipt,
 ): Promise<void> {
-  return receipt.schema_id === "fmx.managed-launch"
-    ? host.publishManagedLaunchOutcome(receipt as ManagedLaunchOutcome)
-    : host.publishLifecycleReceipt(receipt as RuntimeExtensionLifecycleReceipt)
+  if (receipt.message_type === "terminal_receipt") {
+    return host.publishManagedLaunchTerminalReceipt(receipt)
+  }
+  if (receipt.message_type === "launch_outcome") {
+    return host.publishManagedLaunchOutcome(receipt)
+  }
+  return host.publishLifecycleReceipt(receipt)
 }
 
 export type RuntimeExtensionHostOptions = SupervisorOverrides & RuntimeExtensionHostCallbacks & {
@@ -66,11 +76,18 @@ export type RuntimeExtensionHostOptions = SupervisorOverrides & RuntimeExtension
  */
 export class RuntimeExtensionReceiptQueue {
   private host: RuntimeExtensionHost | null = null
-  private pending: Array<RuntimeExtensionLifecycleReceipt | ManagedLaunchOutcome> = []
+  private pending: Array<
+    RuntimeExtensionLifecycleReceipt | ManagedLaunchOutcome | ManagedLaunchTerminalReceipt
+  > = []
   private tail: Promise<void> = Promise.resolve()
   private bindOperation: Promise<void> | null = null
 
-  publish(receipt: RuntimeExtensionLifecycleReceipt | ManagedLaunchOutcome): Promise<void> {
+  publish(
+    receipt:
+      | RuntimeExtensionLifecycleReceipt
+      | ManagedLaunchOutcome
+      | ManagedLaunchTerminalReceipt,
+  ): Promise<void> {
     const exact = structuredClone(receipt)
     if (this.host === null) {
       this.pending.push(exact)
@@ -97,7 +114,10 @@ export class RuntimeExtensionReceiptQueue {
 
   private enqueue(
     host: RuntimeExtensionHost,
-    receipt: RuntimeExtensionLifecycleReceipt | ManagedLaunchOutcome,
+    receipt:
+      | RuntimeExtensionLifecycleReceipt
+      | ManagedLaunchOutcome
+      | ManagedLaunchTerminalReceipt,
   ): Promise<void> {
     const operation = this.tail.then(() => publishReceipt(host, receipt))
     this.tail = operation.catch(() => {})
@@ -182,6 +202,16 @@ export class RuntimeExtensionHost {
       throw new RuntimeExtensionError("invalid_state", "Runtime-extension host has not started")
     }
     await supervisor.publishManagedLaunchOutcome(outcome)
+  }
+
+  async publishManagedLaunchTerminalReceipt(
+    receipt: ManagedLaunchTerminalReceipt,
+  ): Promise<void> {
+    const supervisor = this.supervisor
+    if (supervisor === null) {
+      throw new RuntimeExtensionError("invalid_state", "Runtime-extension host has not started")
+    }
+    await supervisor.publishManagedLaunchTerminalReceipt(receipt)
   }
 
   close(): Promise<void> {

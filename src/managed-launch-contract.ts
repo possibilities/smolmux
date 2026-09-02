@@ -249,6 +249,55 @@ export const managedLaunchAcknowledgementSchema = z.strictObject({
   agent_id: z.string().regex(AGENT_ID),
 })
 
+const managedTerminalEnvelope = {
+  schema_id: z.literal(MANAGED_LAUNCH_SCHEMA_ID),
+  schema_version: z.literal(MANAGED_LAUNCH_SCHEMA_VERSION),
+  workplace_instance_id: safeTokenSchema,
+  fmx_session: z.string().regex(FMX_SESSION),
+  ensure_id: safeTokenSchema,
+  ensure_digest: digestSchema,
+  launch_id: safeTokenSchema,
+  launch_digest: digestSchema,
+  agent_id: z.string().regex(AGENT_ID),
+  attempt: z.number().int().positive().max(4096),
+}
+
+export const managedLaunchTerminalReceiptSchema = z.strictObject({
+  ...managedTerminalEnvelope,
+  message_type: z.literal("terminal_receipt"),
+  receipt_id: safeTokenSchema,
+  receipt_digest: digestSchema,
+  fx_final_receipt: fxLaunchAdmissionFinalMessageSchema,
+  retained_until_acknowledged: z.literal(true),
+}).superRefine((value, context) => {
+  if (value.fx_final_receipt.message_type !== "final_receipt") {
+    context.addIssue({
+      code: "custom",
+      path: ["fx_final_receipt"],
+      message: "managed terminal receipt must carry one exact Fx final receipt",
+    })
+    return
+  }
+  if (
+    value.fx_final_receipt.launch_id !== value.launch_id ||
+    value.fx_final_receipt.launch_digest !== value.launch_digest
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["fx_final_receipt"],
+      message: "managed terminal receipt changed the exact Fx launch correlation",
+    })
+  }
+})
+
+export const managedLaunchTerminalAcknowledgementSchema = z.strictObject({
+  ...managedTerminalEnvelope,
+  message_type: z.literal("terminal_acknowledgement"),
+  acknowledgement_id: safeTokenSchema,
+  receipt_id: safeTokenSchema,
+  receipt_digest: digestSchema,
+})
+
 export const managedLaunchRetrySchema = z.strictObject({
   schema_id: z.literal(MANAGED_LAUNCH_SCHEMA_ID),
   schema_version: z.literal(MANAGED_LAUNCH_SCHEMA_VERSION),
@@ -279,6 +328,8 @@ export const managedLaunchMessageSchema = z.union([
   managedLaunchRequestSchema,
   managedLaunchOutcomeSchema,
   managedLaunchAcknowledgementSchema,
+  managedLaunchTerminalReceiptSchema,
+  managedLaunchTerminalAcknowledgementSchema,
   managedLaunchRetrySchema,
 ])
 
@@ -290,6 +341,18 @@ export type ManagedLaunchAcknowledgement = z.infer<
   typeof managedLaunchAcknowledgementSchema
 >
 export type ManagedLaunchRetry = z.infer<typeof managedLaunchRetrySchema>
+export type ManagedLaunchTerminalReceipt = Omit<
+  z.infer<typeof managedLaunchTerminalReceiptSchema>,
+  "fx_final_receipt"
+> & {
+  fx_final_receipt: Omit<
+    Extract<z.infer<typeof fxLaunchAdmissionFinalMessageSchema>, { outcome: unknown }>,
+    "message_type"
+  > & { message_type: "final_receipt" }
+}
+export type ManagedLaunchTerminalAcknowledgement = z.infer<
+  typeof managedLaunchTerminalAcknowledgementSchema
+>
 export type ManagedLaunchMessage = z.infer<typeof managedLaunchMessageSchema>
 
 export function parseManagedLaunchRequest(input: unknown): ManagedLaunchRequest {
@@ -339,6 +402,42 @@ export function parseManagedLaunchAcknowledgement(
   return structuredClone(parsed.data)
 }
 
+export function parseManagedLaunchTerminalReceipt(
+  input: unknown,
+): ManagedLaunchTerminalReceipt {
+  const parsed = managedLaunchTerminalReceiptSchema.safeParse(input)
+  if (
+    !parsed.success ||
+    parsed.data.fx_final_receipt.message_type !== "final_receipt"
+  ) {
+    throw codecError(parsed, "managed terminal receipt is invalid")
+  }
+  const receipt = structuredClone(parsed.data) as ManagedLaunchTerminalReceipt
+  if (deriveManagedLaunchTerminalReceiptId(receipt) !== receipt.receipt_id) {
+    throw new ContractCodecError(
+      "invalid_message",
+      `managed terminal receipt ${receipt.receipt_id} has an invalid identity`,
+    )
+  }
+  if (deriveManagedLaunchTerminalReceiptDigest(receipt) !== receipt.receipt_digest) {
+    throw new ContractCodecError(
+      "invalid_message",
+      `managed terminal receipt ${receipt.receipt_id} has an invalid digest`,
+    )
+  }
+  return receipt
+}
+
+export function parseManagedLaunchTerminalAcknowledgement(
+  input: unknown,
+): ManagedLaunchTerminalAcknowledgement {
+  const parsed = managedLaunchTerminalAcknowledgementSchema.safeParse(input)
+  if (!parsed.success) {
+    throw codecError(parsed, "managed terminal acknowledgement is invalid")
+  }
+  return structuredClone(parsed.data)
+}
+
 export function parseManagedLaunchRetry(input: unknown): ManagedLaunchRetry {
   const parsed = managedLaunchRetrySchema.safeParse(input)
   if (!parsed.success) throw codecError(parsed, "managed launch retry is invalid")
@@ -372,6 +471,10 @@ export function decodeManagedLaunchPayload(payload: Uint8Array): ManagedLaunchMe
       return parseManagedLaunchOutcome(value)
     case "outcome_acknowledgement":
       return parseManagedLaunchAcknowledgement(value)
+    case "terminal_receipt":
+      return parseManagedLaunchTerminalReceipt(value)
+    case "terminal_acknowledgement":
+      return parseManagedLaunchTerminalAcknowledgement(value)
     case "retry_request":
       return parseManagedLaunchRetry(value)
     default:
@@ -384,6 +487,10 @@ export function encodeManagedLaunchPayload(message: ManagedLaunchMessage): Uint8
   else if (message.message_type === "launch_outcome") parseManagedLaunchOutcome(message)
   else if (message.message_type === "outcome_acknowledgement") {
     parseManagedLaunchAcknowledgement(message)
+  } else if (message.message_type === "terminal_receipt") {
+    parseManagedLaunchTerminalReceipt(message)
+  } else if (message.message_type === "terminal_acknowledgement") {
+    parseManagedLaunchTerminalAcknowledgement(message)
   } else parseManagedLaunchRetry(message)
   return encodeCanonicalJson(message as unknown as JsonValue)
 }
@@ -415,6 +522,24 @@ export function deriveManagedLaunchSourceDigest(request: ManagedLaunchRequest): 
 
 export function deriveManagedLaunchOutcomeDigest(outcome: ManagedLaunchOutcome): string {
   const { receipt_digest: _receiptDigest, ...specification } = outcome
+  return sha256(encodeCanonicalJson(specification as unknown as JsonValue))
+}
+
+export function deriveManagedLaunchTerminalReceiptId(
+  receipt: ManagedLaunchTerminalReceipt,
+): string {
+  const {
+    receipt_id: _receiptId,
+    receipt_digest: _receiptDigest,
+    ...specification
+  } = receipt
+  return `terminal-${sha256(encodeCanonicalJson(specification as unknown as JsonValue))}`
+}
+
+export function deriveManagedLaunchTerminalReceiptDigest(
+  receipt: ManagedLaunchTerminalReceipt,
+): string {
+  const { receipt_digest: _receiptDigest, ...specification } = receipt
   return sha256(encodeCanonicalJson(specification as unknown as JsonValue))
 }
 

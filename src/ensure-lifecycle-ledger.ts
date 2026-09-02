@@ -33,19 +33,26 @@ import {
   managedLaunchOutcomeSchema,
   managedLaunchRequestSchema,
   managedLaunchRetrySchema,
+  managedLaunchTerminalAcknowledgementSchema,
+  managedLaunchTerminalReceiptSchema,
   parseManagedLaunchAcknowledgement,
   parseManagedLaunchOutcome,
   parseManagedLaunchRequest,
   parseManagedLaunchRetry,
+  parseManagedLaunchTerminalAcknowledgement,
+  parseManagedLaunchTerminalReceipt,
   type ManagedLaunchAcknowledgement,
   type ManagedLaunchOutcome,
   type ManagedLaunchRequest,
   type ManagedLaunchRetry,
+  type ManagedLaunchTerminalAcknowledgement,
+  type ManagedLaunchTerminalReceipt,
 } from "./managed-launch-contract.ts"
 
 const LEDGER_SCHEMA_ID = "fmx.ensure-lifecycle-ledger"
 const LEDGER_SCHEMA_VERSION = 3
-const MANAGED_LEDGER_SCHEMA_VERSION = 4
+const PREVIOUS_MANAGED_LEDGER_SCHEMA_VERSION = 4
+const MANAGED_LEDGER_SCHEMA_VERSION = 5
 const LOCK_FILE = ".ensure-lifecycle.lock"
 const RECORD_FILE = /^[0-9a-f]{64}\.json$/u
 const TEMPORARY_FILE = /^[0-9a-f]{64}\.json\.[0-9]+\.[0-9a-f]{16}\.tmp$/u
@@ -161,6 +168,11 @@ export type ManagedLaunchOutcomeTransaction = {
   acknowledgement: ManagedLaunchAcknowledgement | null
 }
 
+export type ManagedLaunchTerminalTransaction = {
+  receipt: ManagedLaunchTerminalReceipt | null
+  acknowledgement: ManagedLaunchTerminalAcknowledgement | null
+}
+
 /**
  * Additive existing-directory launch transaction stored beside, but never
  * translated into, the frozen schema-v1 Worktree transaction.
@@ -181,6 +193,7 @@ export type ManagedLaunchRecord = {
     retry: ManagedLaunchRetry
   }>
   outcome: ManagedLaunchOutcomeTransaction
+  terminal: ManagedLaunchTerminalTransaction
   fx_admission_decision: FxAdmissionDecision | null
   fx_final: FxFinalReceiptTransaction
 }
@@ -339,9 +352,8 @@ const privateRecordSchema = z.strictObject({
   }),
 })
 
-const managedPrivateRecordSchema = z.strictObject({
+const managedPrivateRecordShape = {
   schema_id: z.literal(LEDGER_SCHEMA_ID),
-  schema_version: z.literal(MANAGED_LEDGER_SCHEMA_VERSION),
   revision: z.number().int().positive(),
   request: managedLaunchRequestSchema,
   stage: z.enum(MANAGED_STAGES),
@@ -368,6 +380,20 @@ const managedPrivateRecordSchema = z.strictObject({
     receipt: z.unknown().nullable(),
     acknowledgement: z.unknown().nullable(),
     acknowledgement_applied: z.boolean(),
+  }),
+}
+
+const previousManagedPrivateRecordSchema = z.strictObject({
+  ...managedPrivateRecordShape,
+  schema_version: z.literal(PREVIOUS_MANAGED_LEDGER_SCHEMA_VERSION),
+})
+
+const managedPrivateRecordSchema = z.strictObject({
+  ...managedPrivateRecordShape,
+  schema_version: z.literal(MANAGED_LEDGER_SCHEMA_VERSION),
+  terminal: z.strictObject({
+    receipt: managedLaunchTerminalReceiptSchema.nullable(),
+    acknowledgement: managedLaunchTerminalAcknowledgementSchema.nullable(),
   }),
 })
 
@@ -498,6 +524,7 @@ export class EnsureLifecycleLedger {
         attempt: 1,
         outcome_history: [],
         outcome: { receipt: null, acknowledgement: null },
+        terminal: { receipt: null, acknowledgement: null },
         fx_admission_decision: null,
         fx_final: emptyFxFinalReceiptTransaction(),
       }
@@ -619,6 +646,67 @@ export class EnsureLifecycleLedger {
       const next = copyManagedRecord(record)
       next.revision++
       next.outcome.acknowledgement = acknowledgement
+      validateManagedRecord(next, recordPathFor(this.root, acknowledgement.ensure_id))
+      await this.writeLedgerRecord(
+        next,
+        guard,
+        requireRecordIdentity(index, acknowledgement.ensure_id),
+      )
+      return copyManagedRecord(next)
+    }))
+  }
+
+  retainManagedTerminalReceipt(
+    ensureId: string,
+    receiptInput: ManagedLaunchTerminalReceipt,
+  ): Promise<ManagedLaunchRecord> {
+    return this.serial(() => this.withLock(async (guard) => {
+      const receipt = parseManagedLaunchTerminalReceipt(receiptInput)
+      const index = await this.readIndex(guard)
+      const record = requireManagedRecord(index, ensureId)
+      if (record.terminal.receipt !== null) {
+        if (!sameCanonical(record.terminal.receipt, receipt)) {
+          throw ledgerError(
+            "receipt_conflict",
+            `managed launch ${ensureId} already retains another terminal receipt`,
+          )
+        }
+        return copyManagedRecord(record)
+      }
+      assertManagedTerminalReceiptCorrelation(record, receipt)
+      assertAnyReceiptIdAvailable(index, receipt.receipt_id)
+      const next = copyManagedRecord(record)
+      next.revision++
+      next.terminal.receipt = receipt
+      validateManagedRecord(next, recordPathFor(this.root, ensureId))
+      await this.writeLedgerRecord(next, guard, requireRecordIdentity(index, ensureId))
+      return copyManagedRecord(next)
+    }))
+  }
+
+  acknowledgeManagedTerminalReceipt(
+    acknowledgementInput: ManagedLaunchTerminalAcknowledgement,
+  ): Promise<ManagedLaunchRecord> {
+    return this.serial(() => this.withLock(async (guard) => {
+      const acknowledgement = parseManagedLaunchTerminalAcknowledgement(
+        acknowledgementInput,
+      )
+      const index = await this.readIndex(guard)
+      const record = requireManagedRecord(index, acknowledgement.ensure_id)
+      if (record.terminal.acknowledgement !== null) {
+        if (!sameCanonical(record.terminal.acknowledgement, acknowledgement)) {
+          throw ledgerError(
+            "acknowledgement_conflict",
+            `managed launch ${record.request.ensure_id} already retains another terminal acknowledgement`,
+          )
+        }
+        return copyManagedRecord(record)
+      }
+      assertManagedTerminalAcknowledgementCorrelation(record, acknowledgement)
+      assertAnyAcknowledgementIdAvailable(index, acknowledgement.acknowledgement_id)
+      const next = copyManagedRecord(record)
+      next.revision++
+      next.terminal.acknowledgement = acknowledgement
       validateManagedRecord(next, recordPathFor(this.root, acknowledgement.ensure_id))
       await this.writeLedgerRecord(
         next,
@@ -1716,6 +1804,70 @@ function assertManagedAcknowledgementCorrelation(
   }
 }
 
+function assertManagedTerminalReceiptCorrelation(
+  record: ManagedLaunchRecord,
+  receipt: ManagedLaunchTerminalReceipt,
+): void {
+  const request = record.request
+  for (const field of [
+    "workplace_instance_id",
+    "fmx_session",
+    "ensure_id",
+    "ensure_digest",
+    "launch_id",
+    "launch_digest",
+    "agent_id",
+  ] as const) {
+    if (receipt[field] !== request[field]) {
+      throw ledgerError("receipt_conflict", `managed terminal receipt changed ${field}`)
+    }
+  }
+  if (receipt.attempt !== record.attempt) {
+    throw ledgerError("receipt_conflict", "managed terminal receipt changed the exact attempt")
+  }
+  if (
+    record.fx_final.receipt === null ||
+    !sameCanonical(receipt.fx_final_receipt, record.fx_final.receipt)
+  ) {
+    throw ledgerError(
+      "receipt_conflict",
+      "managed terminal receipt changed the exact retained Fx final receipt",
+    )
+  }
+}
+
+function assertManagedTerminalAcknowledgementCorrelation(
+  record: ManagedLaunchRecord,
+  acknowledgement: ManagedLaunchTerminalAcknowledgement,
+): void {
+  const receipt = record.terminal.receipt
+  if (receipt === null) {
+    throw ledgerError(
+      "invalid_acknowledgement",
+      `managed launch ${record.request.ensure_id} has no terminal receipt`,
+    )
+  }
+  for (const field of [
+    "workplace_instance_id",
+    "fmx_session",
+    "ensure_id",
+    "ensure_digest",
+    "launch_id",
+    "launch_digest",
+    "agent_id",
+    "attempt",
+    "receipt_id",
+    "receipt_digest",
+  ] as const) {
+    if (acknowledgement[field] !== receipt[field]) {
+      throw ledgerError(
+        "invalid_acknowledgement",
+        `managed terminal acknowledgement changed ${field}`,
+      )
+    }
+  }
+}
+
 function assertManagedRetryCorrelation(
   record: ManagedLaunchRecord,
   retry: ManagedLaunchRetry,
@@ -2189,6 +2341,7 @@ function validateManagedRecord(record: ManagedLaunchRecord, path: string): void 
   }
   validateManagedOutcomeTransaction(record, path)
   validateManagedFxState(record, path)
+  validateManagedTerminalTransaction(record, path)
   const historicalWrites = record.outcome_history.length * 2
   const expectedRevision = 1 + stageIndex + historicalWrites + (record.attempt - 1) +
     (record.prepared_conversation_id === null ? 0 : 1) +
@@ -2198,7 +2351,9 @@ function validateManagedRecord(record: ManagedLaunchRecord, path: string): void 
     (record.fx_final.binding === null ? 0 : 1) +
     (record.fx_final.receipt === null ? 0 : 1) +
     (record.fx_final.acknowledgement === null ? 0 : 1) +
-    (record.fx_final.acknowledgement_applied ? 1 : 0)
+    (record.fx_final.acknowledgement_applied ? 1 : 0) +
+    (record.terminal.receipt === null ? 0 : 1) +
+    (record.terminal.acknowledgement === null ? 0 : 1)
   if (record.revision !== expectedRevision) {
     throw ledgerError(
       "corrupt_record",
@@ -2345,6 +2500,43 @@ function validateManagedFxState(record: ManagedLaunchRecord, path: string): void
     const wrapped = ledgerError("corrupt_record", `${path} contains invalid managed Fx state`)
     wrapped.cause = error
     throw wrapped
+  }
+}
+
+function validateManagedTerminalTransaction(
+  record: ManagedLaunchRecord,
+  path: string,
+): void {
+  if (record.terminal.receipt !== null) {
+    try {
+      const receipt = parseManagedLaunchTerminalReceipt(record.terminal.receipt)
+      assertManagedTerminalReceiptCorrelation(record, receipt)
+    } catch (error) {
+      const wrapped = ledgerError(
+        "corrupt_record",
+        `${path} retains an invalid managed terminal receipt`,
+      )
+      wrapped.cause = error
+      throw wrapped
+    }
+  }
+  if (record.terminal.acknowledgement !== null) {
+    try {
+      const acknowledgement = parseManagedLaunchTerminalAcknowledgement(
+        record.terminal.acknowledgement,
+      )
+      assertManagedTerminalAcknowledgementCorrelation(record, acknowledgement)
+    } catch (error) {
+      const wrapped = ledgerError(
+        "corrupt_record",
+        `${path} retains an invalid managed terminal acknowledgement`,
+      )
+      wrapped.cause = error
+      throw wrapped
+    }
+  }
+  if (record.terminal.receipt === null && record.terminal.acknowledgement !== null) {
+    throw ledgerError("corrupt_record", `${path} acknowledges an absent terminal receipt`)
   }
 }
 
@@ -2682,6 +2874,9 @@ function validateManagedIndex(
     if (record.fx_final.receipt !== null) {
       assertUnique(receiptIds, record.fx_final.receipt.receipt_id, "receipt id")
     }
+    if (record.terminal.receipt !== null) {
+      assertUnique(receiptIds, record.terminal.receipt.receipt_id, "receipt id")
+    }
     if (record.outcome.acknowledgement !== null) {
       assertUnique(
         acknowledgementIds,
@@ -2693,6 +2888,13 @@ function validateManagedIndex(
       assertUnique(
         acknowledgementIds,
         record.fx_final.acknowledgement.acknowledgement_id,
+        "acknowledgement id",
+      )
+    }
+    if (record.terminal.acknowledgement !== null) {
+      assertUnique(
+        acknowledgementIds,
+        record.terminal.acknowledgement.acknowledgement_id,
         "acknowledgement id",
       )
     }
@@ -2765,7 +2967,8 @@ function assertAnyReceiptIdAvailable(index: RecordIndex, receiptId: string): voi
       record.outcome_history.some((value) => value.receipt.receipt_id === receiptId) ||
       record.outcome.receipt?.receipt_id === receiptId ||
       record.fx_admission_decision?.receipt_id === receiptId ||
-      record.fx_final.receipt?.receipt_id === receiptId
+      record.fx_final.receipt?.receipt_id === receiptId ||
+      record.terminal.receipt?.receipt_id === receiptId
     ) {
       throw ledgerError("receipt_conflict", `receipt id ${receiptId} belongs to another receipt`)
     }
@@ -2783,7 +2986,8 @@ function assertAnyAcknowledgementIdAvailable(
         (value) => value.acknowledgement?.acknowledgement_id === acknowledgementId,
       ) ||
       record.outcome.acknowledgement?.acknowledgement_id === acknowledgementId ||
-      record.fx_final.acknowledgement?.acknowledgement_id === acknowledgementId
+      record.fx_final.acknowledgement?.acknowledgement_id === acknowledgementId ||
+      record.terminal.acknowledgement?.acknowledgement_id === acknowledgementId
     ) {
       throw ledgerError(
         "acknowledgement_conflict",
@@ -2834,6 +3038,14 @@ async function readRecord(
     const managed = managedPrivateRecordSchema.safeParse(value)
     if (managed.success) {
       const record = decodeManagedRecord(managed.data, path)
+      if (initial.size !== bytes.byteLength) {
+        throw ledgerError("corrupt_record", `${path} changed while being read`)
+      }
+      return { identity: initial, record }
+    }
+    const previousManaged = previousManagedPrivateRecordSchema.safeParse(value)
+    if (previousManaged.success) {
+      const record = decodeManagedRecord(previousManaged.data, path)
       if (initial.size !== bytes.byteLength) {
         throw ledgerError("corrupt_record", `${path} changed while being read`)
       }
@@ -2912,7 +3124,9 @@ async function readRecord(
 }
 
 function decodeManagedRecord(
-  input: z.infer<typeof managedPrivateRecordSchema>,
+  input:
+    | z.infer<typeof managedPrivateRecordSchema>
+    | z.infer<typeof previousManagedPrivateRecordSchema>,
   path: string,
 ): ManagedLaunchRecord {
   const request = parseManagedLaunchRequest(input.request)
@@ -2952,6 +3166,18 @@ function decodeManagedRecord(
         ? null
         : parseManagedLaunchAcknowledgement(input.outcome.acknowledgement),
     },
+    terminal: "terminal" in input
+      ? {
+          receipt: input.terminal.receipt === null
+            ? null
+            : parseManagedLaunchTerminalReceipt(input.terminal.receipt),
+          acknowledgement: input.terminal.acknowledgement === null
+            ? null
+            : parseManagedLaunchTerminalAcknowledgement(
+                input.terminal.acknowledgement,
+              ),
+        }
+      : { receipt: null, acknowledgement: null },
     fx_admission_decision: admissionDecision,
     fx_final: {
       binding,
