@@ -320,7 +320,7 @@ export class LifecycleRuntime {
     return this.coordinator.acceptInlineSource(source)
   }
 
-  acceptManagedLaunch(
+  async acceptManagedLaunch(
     message:
       | ManagedLaunchRequest
       | ManagedLaunchAcknowledgement
@@ -331,7 +331,11 @@ export class LifecycleRuntime {
     signal?.throwIfAborted()
     this.assertOpen()
     this.assertSession(message)
-    return this.coordinator.acceptManaged(message)
+    await this.coordinator.acceptManaged(message)
+    if (message.message_type !== "outcome_acknowledgement" || this.closed) return
+    await this.removeAcknowledgedNeverStartedManagedProjection(
+      await this.ensureLedger.getManaged(message.ensure_id),
+    )
   }
 
   async recover(): Promise<void> {
@@ -384,6 +388,7 @@ export class LifecycleRuntime {
     }
     for (const record of managed) {
       if (this.closed) return
+      if (await this.removeAcknowledgedNeverStartedManagedProjection(record)) continue
       if (record.stage !== "manifest_claimed") continue
       const existing = this.options.manifest.get(record.request.agent_id)
       const workControl = existing?.workControl ?? mintFxWorkControlBinding(
@@ -1125,12 +1130,40 @@ export class LifecycleRuntime {
       if (current === null || current.stage !== "manifest_claimed") return
       const entry = this.options.manifest.get(current.request.agent_id)
       if (entry === null) return
-      const app = this.requireMultiplexer()
-      await app.removeManagedAgentProjection(entry.agentId)
-      await removeFxWorkControlResidue(entry.workControl, this.options.runtimeSocketPath)
-      await this.options.manifest.remove(entry.agentId)
-      app.refreshManagedAgentProjection(entry.agentId)
+      await this.removeInertManagedProjection(entry)
     })
+  }
+
+  /**
+   * Consume only the exact managed terminal state that proves the claimed
+   * process never started. The controller acknowledgement is the durable
+   * boundary: before it arrives the outcome and its creating projection must
+   * remain replayable; every non-permanent or process-ambiguous outcome stays
+   * projected for an explicit retry or later reconciliation.
+   *
+   * `true` means recovery may skip projection because the terminal claim is
+   * already absent or was removed here. A running Manifest entry is retained
+   * fail-closed even if its lifecycle ledger is unexpectedly inconsistent.
+   */
+  private async removeAcknowledgedNeverStartedManagedProjection(
+    record: ManagedLaunchRecord | null,
+  ): Promise<boolean> {
+    if (!isAcknowledgedPermanentNeverStartedManagedClaim(record)) return false
+    const entry = this.options.manifest.get(record.request.agent_id)
+    if (entry === null) return true
+    if (entry.phase !== "creating") return false
+
+    await this.removeInertManagedProjection(entry)
+    return true
+  }
+
+  /** One projection/authority transaction shared by both exact negative proofs. */
+  private async removeInertManagedProjection(entry: ManifestEntry): Promise<void> {
+    const app = this.requireMultiplexer()
+    await app.removeManagedAgentProjection(entry.agentId)
+    await removeFxWorkControlResidue(entry.workControl, this.options.runtimeSocketPath)
+    await this.options.manifest.remove(entry.agentId)
+    app.refreshManagedAgentProjection(entry.agentId)
   }
 
   private async isProvenNeverStarted(
@@ -1591,6 +1624,23 @@ function managedProcessMayHaveStarted(record: ManagedLaunchRecord): boolean {
       receipt.process_certainty === "may_have_started" ||
       receipt.process_certainty === "started"
     )
+}
+
+function isAcknowledgedPermanentNeverStartedManagedClaim(
+  record: ManagedLaunchRecord | null,
+): record is ManagedLaunchRecord {
+  if (record === null || record.stage !== "manifest_claimed") return false
+  const receipt = record.outcome.receipt
+  const acknowledgement = record.outcome.acknowledgement
+  return receipt?.status === "failed" &&
+    receipt.classification === "permanent" &&
+    receipt.cause === "exact_resume_refused" &&
+    receipt.process_certainty === "not_started" &&
+    receipt.exact_resume_proof !== null &&
+    acknowledgement !== null &&
+    acknowledgement.receipt_id === receipt.receipt_id &&
+    acknowledgement.receipt_digest === receipt.receipt_digest &&
+    !managedProcessMayHaveStarted(record)
 }
 
 function requireFinalBinding(record: EnsureLifecycleRecord) {

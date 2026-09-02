@@ -176,6 +176,30 @@ test("projects a predetermined managed identity, then durably starts and adopts 
   }
 })
 
+test("retiring an inert managed claim publishes an exact empty member snapshot", async () => {
+  const h = await harness()
+  try {
+    await h.multiplexer.projectManagedAgent(claim())
+    const before = await h.multiplexer.extension.snapshot()
+    expect(before.agents).toMatchObject([{ agent_id: AGENT_ID, lifecycle: "creating" }])
+    expect(h.transport.starts).toEqual([])
+
+    // LifecycleRuntime owns this exact transaction after its durable
+    // never-started acknowledgement: projection, residue, Manifest, revision.
+    await h.multiplexer.removeManagedAgentProjection(AGENT_ID)
+    await h.manifest.remove(AGENT_ID)
+    h.multiplexer.refreshManagedAgentProjection(AGENT_ID)
+
+    const after = await h.multiplexer.extension.snapshot()
+    expect(after.agents).toEqual([])
+    expect(after.selected_agent_id).toBeNull()
+    expect(BigInt(after.revision)).toBeGreaterThan(BigInt(before.revision))
+    expect(h.transport.starts).toEqual([])
+  } finally {
+    await h.multiplexer.shutdown()
+  }
+})
+
 test("a concurrent managed start waits for the exact claim write before creating Fx", async () => {
   const manifest = AgentManifest.ephemeral("managed-claim-race")
   const originalEnsureClaim = manifest.ensureClaim.bind(manifest)

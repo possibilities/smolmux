@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
+import { existsSync } from "node:fs"
 import { readFile, realpath, rm, mkdtemp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -51,9 +52,14 @@ import type { AgentDefaults } from "../src/config.ts"
 import { mintFxWorkControlBinding } from "../src/fx-work-control.ts"
 import { readGitContext } from "../src/git-context.ts"
 import {
+  deriveManagedExactResumeDecisionDigest,
+  deriveManagedExactResumeDecisionId,
   deriveManagedLaunchEnsureDigest,
+  deriveManagedLaunchOutcomeDigest,
   deriveManagedLaunchSourceDigest,
   parseManagedLaunchRequest,
+  type ManagedLaunchAcknowledgement,
+  type ManagedLaunchOutcome,
   type ManagedLaunchRequest,
   type ManagedLaunchTerminalAcknowledgement,
   type ManagedLaunchTerminalReceipt,
@@ -779,6 +785,198 @@ describe("production lifecycle Runtime composition", () => {
       await harness.runtime.close()
     }
   })
+
+  test("retires only an acknowledged permanent never-started managed claim", async () => {
+    const request = await managedRuntimeFixture("permanent-retire")
+    const harness = await runtimeHarness(
+      await lifecycleFixture("ensure-a", "launch-a", "permanent-retire-carrier"),
+      {
+        preloadedManagedRequest: request,
+        preloadedManagedStage: "manifest_claimed",
+        exactResumeUnavailable: true,
+      },
+    )
+    let endpoint: ReturnType<typeof Bun.listen> | null = null
+    let restarted: LifecycleRuntime | null = null
+    try {
+      await harness.runtime.recover()
+      const outcome = harness.receipts.find(
+        (receipt): receipt is ManagedLaunchOutcome => receipt.message_type === "launch_outcome",
+      )
+      expect(outcome).toMatchObject({
+        status: "failed",
+        classification: "permanent",
+        stage: "launch_provider",
+        cause: "exact_resume_refused",
+        process_certainty: "not_started",
+      })
+      if (outcome === undefined) throw new Error("missing managed permanent outcome")
+
+      // Before the controller's exact acknowledgement, the creating claim is
+      // intentionally retained and no process-side effect has occurred.
+      expect(harness.multiplexer.starts).toEqual([])
+      expect(harness.manifest.get(request.agent_id)?.phase).toBe("creating")
+      expect(harness.multiplexer.removals).toEqual([])
+      const binding = harness.manifest.get(request.agent_id)?.workControl
+      if (binding === null || binding === undefined) throw new Error("missing Work-control binding")
+      endpoint = Bun.listen({ unix: binding.socketPath, socket: { data() {} } })
+      expect(existsSync(binding.socketPath)).toBe(true)
+
+      const acknowledgement = managedOutcomeAcknowledgement(outcome)
+      await harness.runtime.acceptManagedLaunch(acknowledgement)
+      expect(harness.manifest.entries).toEqual([])
+      expect(harness.multiplexer.removals).toEqual([request.agent_id])
+      expect(harness.multiplexer.revisionRefreshes).toEqual([request.agent_id])
+      expect(existsSync(binding.socketPath)).toBe(false)
+      expect(harness.multiplexer.starts).toEqual([])
+
+      // Exact acknowledgement replay is idempotent in the live Runtime.
+      await harness.runtime.acceptManagedLaunch(acknowledgement)
+      expect(harness.multiplexer.removals).toEqual([request.agent_id])
+      expect(harness.multiplexer.revisionRefreshes).toEqual([request.agent_id])
+
+      // A fresh Runtime does not resurrect the acknowledged terminal claim.
+      await harness.runtime.close()
+      const restartedMultiplexer = new FakeMultiplexer(harness.manifest, false)
+      restarted = await LifecycleRuntime.open(harness.options)
+      restarted.bindMultiplexer(restartedMultiplexer)
+      restarted.bindReceiptPublisher(() => {})
+      await restarted.recover()
+      expect(harness.manifest.entries).toEqual([])
+      expect(restartedMultiplexer.claims).toEqual([])
+      expect(restartedMultiplexer.starts).toEqual([])
+      expect(restartedMultiplexer.removals).toEqual([])
+    } finally {
+      endpoint?.stop(true)
+      await restarted?.close()
+      await harness.runtime.close()
+    }
+  })
+
+  test("startup consumes an acknowledged permanent never-started managed claim", async () => {
+    const request = await managedRuntimeFixture("permanent-restart")
+    const harness = await runtimeHarness(
+      await lifecycleFixture("ensure-a", "launch-a", "permanent-restart-carrier"),
+      {
+        preloadedManagedRequest: request,
+        preloadedManagedStage: "manifest_claimed",
+        exactResumeUnavailable: true,
+      },
+    )
+    let restarted: LifecycleRuntime | null = null
+    try {
+      await harness.runtime.recover()
+      const outcome = (await harness.ensureLedger.getManaged(request.ensure_id))?.outcome.receipt
+      if (outcome === null || outcome === undefined) throw new Error("missing managed outcome")
+      // Model the crash window after the controller acknowledgement is durable
+      // but before the live Runtime consumes the inert Manifest projection.
+      await harness.ensureLedger.acknowledgeManagedOutcome(
+        managedOutcomeAcknowledgement(outcome),
+      )
+      expect(harness.manifest.get(request.agent_id)?.phase).toBe("creating")
+      await harness.runtime.close()
+
+      const restartedMultiplexer = new FakeMultiplexer(harness.manifest, false)
+      restarted = await LifecycleRuntime.open(harness.options)
+      restarted.bindMultiplexer(restartedMultiplexer)
+      restarted.bindReceiptPublisher(() => {})
+      await restarted.recover()
+      expect(harness.manifest.entries).toEqual([])
+      expect(restartedMultiplexer.starts).toEqual([])
+      expect(restartedMultiplexer.removals).toEqual([request.agent_id])
+      expect(restartedMultiplexer.revisionRefreshes).toEqual([request.agent_id])
+
+      await restarted.recover()
+      expect(restartedMultiplexer.removals).toEqual([request.agent_id])
+      expect(restartedMultiplexer.revisionRefreshes).toEqual([request.agent_id])
+    } finally {
+      await restarted?.close()
+      await harness.runtime.close()
+    }
+  })
+
+  test("retains acknowledged managed claims without exact permanent never-started proof", async () => {
+    const cases = [
+      {
+        suffix: "retryable-retained",
+        stage: "manifest_claimed" as const,
+        failure: {
+          classification: "retryable" as const,
+          stage: "launch_provider" as const,
+          cause: "launch_provider_unavailable" as const,
+          process_certainty: "not_started" as const,
+        },
+      },
+      {
+        suffix: "uncertain-retained",
+        stage: "manifest_claimed" as const,
+        failure: {
+          classification: "uncertain" as const,
+          stage: "companion_start" as const,
+          cause: "companion_start_uncertain" as const,
+          process_certainty: "may_have_started" as const,
+        },
+      },
+      {
+        suffix: "started-retained",
+        stage: "companion_started" as const,
+        failure: {
+          classification: "retryable" as const,
+          stage: "fx_admission" as const,
+          cause: "fx_admission_unavailable" as const,
+          process_certainty: "started" as const,
+        },
+      },
+    ]
+    for (const scenario of cases) {
+      const request = await managedRuntimeFixture(scenario.suffix)
+      const harness = await runtimeHarness(
+        await lifecycleFixture("ensure-a", "launch-a", `${scenario.suffix}-carrier`),
+        {
+          preloadedManagedRequest: request,
+          preloadedManagedStage: scenario.stage,
+        },
+      )
+      try {
+        const outcome = failedManagedOutcome(request, scenario.failure)
+        await harness.ensureLedger.retainManagedOutcome(request.ensure_id, outcome)
+        await harness.ensureLedger.acknowledgeManagedOutcome(
+          managedOutcomeAcknowledgement(outcome),
+        )
+        await harness.runtime.recover()
+        expect(harness.manifest.get(request.agent_id)).not.toBeNull()
+        expect(harness.multiplexer.removals).toEqual([])
+        expect(harness.multiplexer.revisionRefreshes).toEqual([])
+      } finally {
+        await harness.runtime.close()
+      }
+    }
+
+    // A contradictory running Manifest is process authority. Even an exact
+    // permanent/not-started ledger acknowledgement must fail closed around it.
+    const runningRequest = await managedRuntimeFixture("running-conflict-retained")
+    const runningHarness = await runtimeHarness(
+      await lifecycleFixture("ensure-a", "launch-a", "running-conflict-carrier"),
+      {
+        preloadedManagedRequest: runningRequest,
+        preloadedManagedStage: "manifest_claimed",
+        exactResumeUnavailable: true,
+      },
+    )
+    try {
+      await runningHarness.runtime.recover()
+      const outcome = (await runningHarness.ensureLedger.getManaged(runningRequest.ensure_id))
+        ?.outcome.receipt
+      if (outcome === null || outcome === undefined) throw new Error("missing managed outcome")
+      await runningHarness.manifest.markRunning(runningRequest.agent_id)
+      await runningHarness.runtime.acceptManagedLaunch(managedOutcomeAcknowledgement(outcome))
+      expect(runningHarness.manifest.get(runningRequest.agent_id)?.phase).toBe("running")
+      expect(runningHarness.multiplexer.removals).toEqual([])
+      expect(runningHarness.multiplexer.revisionRefreshes).toEqual([])
+    } finally {
+      await runningHarness.runtime.close()
+    }
+  })
 })
 
 async function runtimeHarness(
@@ -795,9 +993,11 @@ async function runtimeHarness(
     retirementGate?: Promise<void>
     cleanupGate?: Promise<void>
     neverAdmit?: boolean
+    exactResumeUnavailable?: boolean
     pendingAdmissionRetryDelayMsForTests?: number
-    /** Seeds a managed-launch record directly at companion_started, plus its Manifest claim. */
+    /** Seeds a managed-launch record plus its exact durable Manifest claim. */
     preloadedManagedRequest?: ManagedLaunchRequest
+    preloadedManagedStage?: "manifest_claimed" | "companion_started"
   } = {},
 ) {
   const home = await temporaryDirectory()
@@ -827,6 +1027,7 @@ async function runtimeHarness(
   const runtimeSocketPath = `/tmp/fmx-lr-${process.pid}-${temporaryDirectories.length}.bus`
   if (choices.preloadedManagedRequest !== undefined) {
     const request = choices.preloadedManagedRequest
+    const managedStage = choices.preloadedManagedStage ?? "companion_started"
     await preloadedEnsureLedger!.claimManaged(request)
     await preloadedEnsureLedger!.advanceManaged(request.ensure_id, {
       kind: "directory_validated",
@@ -839,22 +1040,23 @@ async function runtimeHarness(
       kind: "manifest_claimed",
       agent_id: request.agent_id,
     })
-    await preloadedEnsureLedger!.bindManagedFxFinalReceiptAuthority(request.ensure_id, {
-      admission_key: request.source.admission_key,
-      state_root: request.source.launch_request.state_root,
-    })
-    await preloadedEnsureLedger!.retainManagedPreparedConversation(
-      request.ensure_id,
-      request.fx_conversation.resume_conversation_id!,
-    )
-    await preloadedEnsureLedger!.advanceManaged(request.ensure_id, {
-      kind: "companion_started",
-      session_name: `fmx-${request.agent_id}`,
-      pane_id: `p_${request.agent_id}`,
-    })
-    // The Companion is already durably started for this managed Agent: seed
-    // the Manifest claim + Work-control binding the way projectManagedAgent
-    // would have, without going through the FakeMultiplexer.
+    if (managedStage === "companion_started") {
+      await preloadedEnsureLedger!.bindManagedFxFinalReceiptAuthority(request.ensure_id, {
+        admission_key: request.source.admission_key,
+        state_root: request.source.launch_request.state_root,
+      })
+      await preloadedEnsureLedger!.retainManagedPreparedConversation(
+        request.ensure_id,
+        request.fx_conversation.resume_conversation_id!,
+      )
+      await preloadedEnsureLedger!.advanceManaged(request.ensure_id, {
+        kind: "companion_started",
+        session_name: `fmx-${request.agent_id}`,
+        pane_id: `p_${request.agent_id}`,
+      })
+    }
+    // Seed the Manifest claim + Work-control binding the way
+    // projectManagedAgent would have, without going through the fake.
     const workControlBinding = mintFxWorkControlBinding(runtimeSocketPath, request.agent_id)
     const { saved } = manifest.ensureClaim({
       identity: identityFor(request.agent_id),
@@ -866,7 +1068,7 @@ async function runtimeHarness(
       createdAt: 1,
     })
     await saved
-    await manifest.markRunning(request.agent_id)
+    if (managedStage === "companion_started") await manifest.markRunning(request.agent_id)
   }
   const multiplexer = new FakeMultiplexer(
     manifest,
@@ -881,6 +1083,8 @@ async function runtimeHarness(
     choices.providerEnvironment,
     choices.neverAdmit ?? false,
     choices.preloadedManagedRequest?.fx_conversation.resume_conversation_id ?? "conversation-runtime",
+    choices.preloadedManagedRequest,
+    choices.exactResumeUnavailable ?? false,
   )
   const retirement = choices.retirementGate === undefined
     ? undefined
@@ -949,6 +1153,8 @@ async function runtimeHarness(
     cleanup,
     receipts,
     errors,
+    ensureLedger: preloadedEnsureLedger ?? await EnsureLifecycleLedger.open(runtimeRoots.ensure),
+    options,
   }
 }
 
@@ -1041,46 +1247,77 @@ class FakeProvider {
     /** Fx never decides: every inspect() stays pending regardless of admission. */
     private readonly neverAdmit: boolean = false,
     private readonly finalConversationId: string = "conversation-runtime",
+    private readonly managedRequest?: ManagedLaunchRequest,
+    private readonly exactResumeUnavailable: boolean = false,
   ) {}
 
   async prepare() {
     this.operations.push("prepare")
+    const launch = this.managedRequest?.source.launch_request ?? this.fixture.source.launch_request
+    const request = this.managedRequest ?? this.fixture.ensure
     return {
       schema_id: "fx.launch-admission-final",
       schema_version: 1,
       message_type: "launch_receipt",
-      request_id: this.fixture.source.launch_request.request_id,
+      request_id: launch.request_id,
       receipt_id: "runtime-launch-receipt",
-      launch_id: this.fixture.ensure.launch_id,
-      launch_digest: this.fixture.ensure.launch_digest,
-      admission_key: this.fixture.source.admission_key,
+      launch_id: request.launch_id,
+      launch_digest: request.launch_digest,
+      admission_key: this.managedRequest?.source.admission_key ?? this.fixture.source.admission_key,
       status: "accepted",
     } as const
   }
 
   async build() {
     this.operations.push("build")
+    const launch = this.managedRequest?.source.launch_request ?? this.fixture.source.launch_request
+    const directory = this.managedRequest?.workspace.directory ??
+      this.fixture.ensure.planned_worktree.directory
+    const conversationId = this.managedRequest?.fx_conversation.resume_conversation_id ??
+      "conversation-runtime"
     return {
       command: [
         "--state-dir",
-        this.fixture.source.launch_request.state_root,
+        launch.state_root,
         "--context-limit",
         "skill_chunk_bytes=4096",
         "--tool",
         "read",
       ],
-      cwd: this.fixture.ensure.planned_worktree.directory,
+      cwd: directory,
       env: {
-        FX_INTERNAL_LAUNCH_STATE_ROOT: this.fixture.source.launch_request.state_root,
-        FX_INTERNAL_LAUNCH_ADMISSION_KEY: this.fixture.source.admission_key,
-        FX_INTERNAL_LAUNCH_DIGEST: this.fixture.ensure.launch_digest,
-        FX_INTERNAL_LAUNCH_ID: this.fixture.ensure.launch_id,
-        FX_INTERNAL_LAUNCH_CONVERSATION_ID: "conversation-runtime",
+        FX_INTERNAL_LAUNCH_STATE_ROOT: launch.state_root,
+        FX_INTERNAL_LAUNCH_ADMISSION_KEY:
+          this.managedRequest?.source.admission_key ?? this.fixture.source.admission_key,
+        FX_INTERNAL_LAUNCH_DIGEST:
+          this.managedRequest?.launch_digest ?? this.fixture.ensure.launch_digest,
+        FX_INTERNAL_LAUNCH_ID: this.managedRequest?.launch_id ?? this.fixture.ensure.launch_id,
+        FX_INTERNAL_LAUNCH_CONVERSATION_ID: conversationId,
         ...this.providerEnvironment,
       },
-      conversationId: "conversation-runtime",
+      conversationId,
       mode: "initial" as const,
     }
+  }
+
+  async resumeStatus(correlation: {
+    stateRoot: string
+    admissionKey: string
+    launchDigest: string
+    launchId: string
+  }) {
+    this.operations.push("resume_status")
+    const conversationId = this.managedRequest?.fx_conversation.resume_conversation_id
+    if (conversationId === null || conversationId === undefined) {
+      throw new Error("managed exact-resume fixture has no Conversation")
+    }
+    if (!this.exactResumeUnavailable) {
+      throw new Error("unexpected managed exact-resume status request")
+    }
+    return managedResumeStatus(
+      correlation,
+      conversationId,
+    )
   }
 
   async inspect(correlation?: {
@@ -1392,6 +1629,99 @@ function managedTerminalAcknowledgement(
     schema_id: "fmx.managed-launch",
     schema_version: 1,
     workplace_instance_id: receipt.workplace_instance_id,
+  }
+}
+
+function managedOutcomeAcknowledgement(
+  outcome: ManagedLaunchOutcome,
+): ManagedLaunchAcknowledgement {
+  return {
+    schema_id: "fmx.managed-launch",
+    schema_version: 1,
+    message_type: "outcome_acknowledgement",
+    acknowledgement_id: `controller-outcome-ack-${outcome.ensure_id}`,
+    workplace_instance_id: outcome.workplace_instance_id,
+    fmx_session: outcome.fmx_session,
+    receipt_id: outcome.receipt_id,
+    receipt_digest: outcome.receipt_digest,
+    attempt: outcome.attempt,
+    ensure_id: outcome.ensure_id,
+    ensure_digest: outcome.ensure_digest,
+    launch_id: outcome.launch_id,
+    launch_digest: outcome.launch_digest,
+    agent_id: outcome.agent_id,
+  }
+}
+
+function failedManagedOutcome(
+  request: ManagedLaunchRequest,
+  failure: {
+    classification: "retryable" | "uncertain"
+    stage: "launch_provider" | "companion_start" | "fx_admission"
+    cause:
+      | "launch_provider_unavailable"
+      | "companion_start_uncertain"
+      | "fx_admission_unavailable"
+    process_certainty: "not_started" | "may_have_started" | "started"
+  },
+): ManagedLaunchOutcome {
+  const outcome: ManagedLaunchOutcome = {
+    schema_id: "fmx.managed-launch",
+    schema_version: 1,
+    message_type: "launch_outcome",
+    request_id: request.request_id,
+    receipt_id: `runtime-managed-outcome-${request.ensure_id}`,
+    receipt_digest: "0".repeat(64),
+    workplace_instance_id: request.workplace_instance_id,
+    fmx_session: request.fmx_session,
+    ensure_id: request.ensure_id,
+    ensure_digest: request.ensure_digest,
+    launch_id: request.launch_id,
+    launch_digest: request.launch_digest,
+    agent_id: request.agent_id,
+    attempt: 1,
+    status: "failed",
+    ...failure,
+    exact_resume_proof: null,
+    success: null,
+    retained_until_acknowledged: true,
+  }
+  outcome.receipt_digest = deriveManagedLaunchOutcomeDigest(outcome)
+  return outcome
+}
+
+function managedResumeStatus(
+  correlation: {
+    stateRoot: string
+    admissionKey: string
+    launchDigest: string
+    launchId: string
+  },
+  conversationId: string,
+) {
+  const proof: NonNullable<ManagedLaunchOutcome["exact_resume_proof"]> = {
+    kind: "exact_resume_refused",
+    authority: "fx.private-launch-provider/resume-status-v2",
+    semantic_decision: "exact_resume_unavailable",
+    status: "unavailable",
+    decision_id: "pending",
+    decision_digest: "0".repeat(64),
+    admission_key: correlation.admissionKey,
+    conversation_id: conversationId,
+    launch_digest: correlation.launchDigest,
+    launch_id: correlation.launchId,
+    state_root: correlation.stateRoot,
+  }
+  proof.decision_id = deriveManagedExactResumeDecisionId(proof)
+  proof.decision_digest = deriveManagedExactResumeDecisionDigest(proof)
+  return {
+    authority: proof.authority,
+    conversationId: proof.conversation_id,
+    decisionId: proof.decision_id,
+    decisionDigest: proof.decision_digest,
+    semanticDecision: proof.semantic_decision,
+    status: proof.status,
+    ...correlation,
   }
 }
 
