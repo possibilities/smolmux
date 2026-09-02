@@ -363,7 +363,15 @@ export class LifecycleRuntime {
       if (record.stage !== "manifest_claimed") continue
       const source = await this.sources.sourceForEnsure(record.request)
       if (source === null) {
-        throw new Error(`ensure ${record.request.ensure_id} has no exact Fx state root for Manifest replay`)
+        // One unreplayable record is a diagnostic, never the end of the pass:
+        // ending it here would leave every later survivor unprojected and take
+        // the Runtime down with it. The coordinator reports the same absence
+        // per ensure.
+        this.report(
+          new Error(`ensure ${record.request.ensure_id} has no exact Fx state root for Manifest replay`),
+          record.request.ensure_id,
+        )
+        continue
       }
       const existing = this.options.manifest.get(record.request.agent_id)
       const workControl = existing?.workControl ?? mintFxWorkControlBinding(

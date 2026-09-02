@@ -289,6 +289,14 @@ export class AgentManifest {
       if (!sameClaim(existing, params)) {
         throw new Error(`conflicting manifest claim for agent: ${params.identity.agentId}`)
       }
+      // An entry claimed before the state root was recorded parses with
+      // `null`. The replayed claim's exact root is adopted, and written with
+      // this snapshot, so every later replay compares exactly.
+      const replayed = params.fxStateRoot ?? null
+      if (existing.fxStateRoot === null && replayed !== null) {
+        if (!isValidFxStateRoot(replayed)) throw new Error("invalid Fx state root for manifest claim")
+        existing.fxStateRoot = replayed
+      }
       return copy(existing)
     })
   }
@@ -438,8 +446,17 @@ function sameClaim(
     entry.cwd === params.cwd &&
     entry.fxPath === params.fxPath &&
     sameNullableStrings(entry.fxArgs, params.fxArgs) &&
-    entry.fxStateRoot === (params.fxStateRoot ?? null) &&
+    sameFxStateRoot(entry.fxStateRoot, params.fxStateRoot ?? null) &&
     sameWorkControl(entry.workControl, params.workControl ?? null)
+}
+
+/**
+ * A stored `null` is the absence of a recorded root, not a different one: an
+ * entry written before managed state roots were kept must still match its own
+ * replay. Two different non-null roots remain a conflict.
+ */
+function sameFxStateRoot(stored: string | null, replayed: string | null): boolean {
+  return stored === null || stored === replayed
 }
 
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u
