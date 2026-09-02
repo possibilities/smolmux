@@ -272,6 +272,7 @@ type PendingRequest = {
 
 type InboundRequest = {
   abort: AbortController
+  managedReplay: Uint8Array | null
 }
 
 type InvalidationLevel = {
@@ -957,7 +958,7 @@ export class RuntimeExtensionSupervisor {
     }
     generation.activeRequestIds.add(request.request_id)
     const abort = new AbortController()
-    generation.inbound.set(request.request_id, { abort })
+    generation.inbound.set(request.request_id, { abort, managedReplay: null })
     void this.dispatchInboundRequest(generation, request, abort)
   }
 
@@ -1035,7 +1036,7 @@ export class RuntimeExtensionSupervisor {
 
     if (requestId !== null) generation.activeRequestIds.add(requestId)
     const abort = new AbortController()
-    generation.inbound.set(inboundKey, { abort })
+    generation.inbound.set(inboundKey, { abort, managedReplay: null })
     void this.dispatchLifecycleInbound(generation, message, inboundKey, requestId, abort)
   }
 
@@ -1063,7 +1064,7 @@ export class RuntimeExtensionSupervisor {
     }
     generation.activeRequestIds.add(request.request_id)
     const abort = new AbortController()
-    generation.inbound.set(request.request_id, { abort })
+    generation.inbound.set(request.request_id, { abort, managedReplay: null })
     void this.dispatchInlineSourceInbound(generation, request, abort)
   }
 
@@ -1081,6 +1082,19 @@ export class RuntimeExtensionSupervisor {
     const inboundKey = message.message_type !== "outcome_acknowledgement"
       ? message.request_id
       : `managed-acknowledgement/${message.acknowledgement_id}`
+    const managedReplay = encodeCanonicalJson(message as unknown as JsonValue)
+    const existing = generation.inbound.get(inboundKey)
+    // Managed-launch request and acknowledgement identities are durable
+    // idempotency keys. The Controller deliberately replays one pending outbox
+    // until its authoritative outcome is acknowledged, so an exact replay may
+    // arrive while the first async admission still owns this generation's
+    // handler. Coalesce only that byte-identical replay; changed content and
+    // cross-family collisions remain protocol errors below.
+    if (
+      existing?.managedReplay !== null &&
+      existing?.managedReplay !== undefined &&
+      bytesEqual(existing.managedReplay, managedReplay)
+    ) return
     if (requestId !== null && generation.activeRequestIds.has(requestId)) {
       throw {
         code: "protocol_error",
@@ -1101,7 +1115,7 @@ export class RuntimeExtensionSupervisor {
     }
     if (requestId !== null) generation.activeRequestIds.add(requestId)
     const abort = new AbortController()
-    generation.inbound.set(inboundKey, { abort })
+    generation.inbound.set(inboundKey, { abort, managedReplay })
     void this.dispatchManagedLaunchInbound(
       generation,
       message,
@@ -1688,6 +1702,11 @@ function lifecycleMessageIdentity(message: RuntimeExtensionLifecycleInbound): st
   return message.message_type === "receipt_acknowledgement"
     ? `${message.message_type} ${message.acknowledgement_id}`
     : `${message.message_type} ${message.request_id}`
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  return left.byteLength === right.byteLength &&
+    left.every((byte, index) => byte === right[index])
 }
 
 function validateInboundOutcome(

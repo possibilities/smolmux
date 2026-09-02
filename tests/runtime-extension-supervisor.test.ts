@@ -457,6 +457,64 @@ describe("Runtime-extension managed-launch transport", () => {
     expect(supervisor.state).toBe("ready")
   })
 
+  test("coalesces an exact managed-launch replay while its first admission is in flight", async () => {
+    const request = managedLaunchRequest()
+    const release = deferred<void>()
+    const started = deferred<void>()
+    const diagnostics: RuntimeExtensionError[] = []
+    let calls = 0
+    const supervisor = await startSupervisor(PEER, "ready", {
+      env: {
+        FMX_SUPERVISOR_CHILD_SCRIPT: JSON.stringify([
+          request,
+          structuredClone(request),
+        ]),
+      },
+      onManagedLaunchMessage: async () => {
+        calls++
+        started.resolve()
+        await release.promise
+      },
+      onDisconnect: (error) => {
+        diagnostics.push(error)
+      },
+    })
+
+    await withTestTimeout(started.promise, 1_000, "managed request was not admitted")
+    await Bun.sleep(25)
+    expect(supervisor.state).toBe("ready")
+    expect(calls).toBe(1)
+    expect(diagnostics).toEqual([])
+    release.resolve()
+  })
+
+  test("rejects changed managed-launch content that reuses an in-flight request id", async () => {
+    const request = managedLaunchRequest()
+    const retry = {
+      ...managedLaunchRetry(managedLaunchFailure(request)),
+      request_id: request.request_id,
+    }
+    const disconnected = deferred<RuntimeExtensionError>()
+    await startSupervisor(PEER, "ready", {
+      env: {
+        FMX_SUPERVISOR_CHILD_SCRIPT: JSON.stringify([request, retry]),
+      },
+      onManagedLaunchMessage: (_message, signal) =>
+        new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true })
+        ),
+      onDisconnect: disconnected.resolve,
+    })
+
+    const error = await withTestTimeout(
+      disconnected.promise,
+      1_000,
+      "changed managed replay was not rejected",
+    )
+    expect(error.code).toBe("protocol_error")
+    expect(error.message).toContain(`reused Runtime-extension request id ${request.request_id}`)
+  })
+
   test("rejects managed outcomes in the child-to-host direction", async () => {
     const outcome = managedLaunchFailure(managedLaunchRequest())
     const disconnected = deferred<RuntimeExtensionError>()
