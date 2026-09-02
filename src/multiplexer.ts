@@ -1572,7 +1572,15 @@ export class Multiplexer {
       entries = currentEntries
     }
     for (const entry of entries) {
-      if (entry.fxSessionId) this.sessionNames.recover(entry.fxSessionId)
+      // A live metadata event can precede Fx's atomic display-file write.
+      // Snapshot reads may fill an absent name, but are not a recovery event
+      // that can erase already-accepted ADE authority during that window.
+      if (
+        entry.fxSessionId &&
+        this.sessionNames.nameFor(entry.fxSessionId) === null
+      ) {
+        this.sessionNames.recover(entry.fxSessionId)
+      }
     }
     this.refreshExtensionRevision()
     const liveById = new Map(this.agents.map((agent) => [agent.entry.agentId, agent]))

@@ -804,6 +804,42 @@ test("adopts native session names over ADE and recovers sequence gaps", async ()
   }
 })
 
+test("keeps an ADE session name across a Runtime-extension snapshot during its display-file write window", async () => {
+  const h = await harness("ade-name-extension-snapshot")
+  const sessionId = "1787362101391-1787362101391156000-2897385323da2686"
+  try {
+    await h.start()
+    const [agent] = h.options.manifest.entries
+    expect(agent).toBeDefined()
+
+    await sendAde(
+      h.adeSocket,
+      adeRecord(1, agent!.agentId, "FxStarted", sessionId),
+    )
+    await sendAde(
+      h.adeSocket,
+      adeRecord(2, agent!.agentId, "SessionMetadataChanged", sessionId, {
+        title: "phase2-manager",
+      }),
+    )
+    await waitForSnapshot(
+      () => h.control("orient") as Promise<Snapshot>,
+      (current) => current.agents[0]?.name === "phase2-manager",
+    )
+
+    expect(await h.multiplexer.extension.snapshot()).toMatchObject({
+      agents: [{
+        fx_conversation: {
+          conversation_id: sessionId,
+          name: "phase2-manager",
+        },
+      }],
+    })
+  } finally {
+    await h.close()
+  }
+})
+
 test("does not let delayed child attribution rewind the active main session", async () => {
   const h = await harness("child-attribution")
   const oldSession = "1787362101400-1787362101400156000-2897385323da2686"
