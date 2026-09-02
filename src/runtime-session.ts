@@ -46,8 +46,6 @@ export type RuntimeSessionPreparation = {
   env?: Record<string, string>
   /** Internal accepted-startup facts; never compared against later Clients. */
   labels?: Record<string, string>
-  /** Associated Runtimes opt out after their ordinary terminal bootstrap. */
-  exitOnLastClient?: boolean
 }
 
 /** One deterministic Companion session is the shared fmx Runtime for a Home. */
@@ -128,7 +126,7 @@ export async function ensureRuntimeSession(
       cwd: request.cwd,
       env: runtimeEnvironment,
       labels: { ...identity.labels, ...preparation.labels },
-      exitOnLastClient: preparation.exitOnLastClient ?? true,
+      exitOnLastClient: true,
     })
     return { socketPath: created.socketPath, bootstrapPath: identity.bootstrapPath }
   } catch (error) {

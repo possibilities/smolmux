@@ -81,11 +81,13 @@ _Avoid_: role mapping, Manager Session, Worker Session, peer launch.
 **Runtime extension** — one implementation-private child process supervised
 by an associated Runtime after its ordinary terminal bootstrap. Its explicit
 manifest under `runtime-extensions/` supplies an absolute argv, protocol
-range, and required headless-liveness declaration; canonical bounded framed
-stdio carries exact readiness, snapshots, presentation, and the recovery-card
-seam. A cold associated Runtime fails closed before its first frame when this
-contract is unavailable or incompatible, while a later child loss degrades
-only extension functionality.
+range, and required headless-liveness declaration: the child does not depend
+on an Agent terminal being visible, but it never keeps the host Runtime alive
+after the final physical Client leaves. Canonical bounded framed stdio carries
+exact readiness, snapshots, presentation, and the recovery-card seam. A cold
+associated Runtime fails closed before its first frame when this contract is
+unavailable or incompatible, while a later child loss degrades only extension
+functionality.
 _Avoid_: plugin, MCP server, Runtime bridge, second Agent transport.
 
 **Member snapshot** — the authoritative point-in-time view an associated
@@ -104,10 +106,10 @@ restart, or resume meaning and exposes no MCP equivalent.
 _Avoid_: arbitrary TUI injection, dialog, Agent row, policy fallback.
 
 **Associated Runtime** — a Runtime whose cold-start snapshot accepted one
-Workplace association and Runtime extension. After the ordinary real-terminal
-bootstrap it remains Companion-held with its extension when zero Clients are
-attached; it is not started at login, does not start its peer, and is not
-resurrected after a crash. An unassociated Runtime retains final-Detach exit.
+Workplace association and Runtime extension. It is not started at login and
+does not start its peer. Like every Runtime, it ends after its final terminal
+Client leaves; the Companion-held Agents survive, and the next ordinary Client
+starts a new Runtime and extension which restore them from retained authority.
 _Avoid_: service, hidden Client, OS supervisor, live configuration view.
 
 **Manifest** — the fmx Session's `agents.json` (`~/.config/fmx/agents.json` for the

@@ -249,7 +249,7 @@ test.skipIf(!PTY_TEST_ENABLED)(
 )
 
 test.skipIf(!PTY_TEST_ENABLED)(
-  "associated Runtime extension survives zero Clients, stale config, and one Runtime restart",
+  "associated Runtime ends with its final Client, then restores its extension and surviving Agent",
   async () => {
     await chmod(FAKE_FX, 0o755)
     const temporaryDirectory = await mkdtemp(join(tmpdir(), "fmx-extension-e2e-"))
@@ -310,7 +310,6 @@ test.skipIf(!PTY_TEST_ENABLED)(
       ["--agent-picker", "--hide-single-agent-picker"],
     )
     let secondAlpha: ReturnType<typeof spawnClient> | null = null
-    let thirdAlpha: ReturnType<typeof spawnClient> | null = null
     let restartedAlpha: ReturnType<typeof spawnClient> | null = null
     let beta: ReturnType<typeof spawnClient> | null = null
     try {
@@ -408,54 +407,6 @@ test.skipIf(!PTY_TEST_ENABLED)(
       )).toHaveLength(1)
       await writeFile(fixture.configPath, fixture.config)
 
-      alpha.terminal?.write(Uint8Array.of(control("b"), "d".charCodeAt(0)))
-      expect(await withTimeout(alpha.exited, 6_000, "first associated Client did not detach")).toBe(0)
-      alpha.terminal?.close()
-      secondAlpha.terminal?.write(Uint8Array.of(control("b"), "d".charCodeAt(0)))
-      expect(await withTimeout(secondAlpha.exited, 6_000, "final associated Client did not detach")).toBe(0)
-      secondAlpha.terminal?.close()
-      await waitUntil(
-        async () => (await orientation(temporaryDirectory, baseEnv, "alpha"))?.fmx.pid === runtimePid,
-        8_000,
-        () => secondOutput.output,
-      )
-
-      const thirdOutput = { output: "" }
-      thirdAlpha = spawnClient("alpha", thirdOutput, {}, [], 82, 20)
-      await waitUntil(
-        async () => {
-          const snapshot = await orientation(temporaryDirectory, baseEnv, "alpha")
-          return snapshot?.fmx.pid === runtimePid && snapshot.fmx.cols === 82 && snapshot.fmx.rows === 20
-        },
-        8_000,
-        () => thirdOutput.output,
-      )
-      thirdAlpha.terminal?.write(Uint8Array.of(control("b"), "d".charCodeAt(0)))
-      expect(await withTimeout(thirdAlpha.exited, 6_000, "rejoined associated Client did not detach")).toBe(0)
-      thirdAlpha.terminal?.close()
-
-      // Starting the absent peer later is independent and succeeds; it never
-      // had to exist for alpha's readiness or zero-Client liveness.
-      const betaOutput = { output: "" }
-      beta = spawnClient("beta", betaOutput, {
-        FMX_FIXTURE_EXTENSION_LOG: betaExtensionLog,
-        FMX_FIXTURE_EXTENSION_MODE: "ready",
-        FMX_FIXTURE_EXTENSION_AUTO_SNAPSHOT: "1",
-      })
-      await waitUntil(
-        async () => (await orientation(temporaryDirectory, baseEnv, "beta")) !== null,
-        12_000,
-        () => betaOutput.output,
-      )
-      expect((await orientation(temporaryDirectory, baseEnv, "alpha"))?.fmx.pid).toBe(runtimePid)
-      beta.terminal?.write(Uint8Array.of(control("b"), "d".charCodeAt(0)))
-      expect(await withTimeout(beta.exited, 6_000, "peer Client did not detach")).toBe(0)
-      beta.terminal?.close()
-      expect(await orientation(temporaryDirectory, baseEnv, "beta")).not.toBeNull()
-
-      // A crashed/ended Runtime is not resurrected until another ordinary
-      // Client start. That start repeats readiness and restores the Companion-
-      // held Agent under a new Runtime pid.
       const companion = new CompanionCommand(
         companionDirectoryFor(temporaryDirectory),
         process.env,
@@ -465,15 +416,28 @@ test.skipIf(!PTY_TEST_ENABLED)(
         homeOf(temporaryDirectory, "alpha"),
         companionDirectoryFor(temporaryDirectory),
       ).name
-      await companion.kill(runtimeName)
+      const agentName = `fmx-${created.agent.agent_id}`
+      const initialAgentSession = await companion.inspect(agentName)
+      expect(initialAgentSession.state).toBe("live")
+      expect(initialAgentSession.pid).not.toBeNull()
+
+      alpha.terminal?.write(Uint8Array.of(control("b"), "d".charCodeAt(0)))
+      expect(await withTimeout(alpha.exited, 6_000, "first associated Client did not detach")).toBe(0)
+      alpha.terminal?.close()
+      secondAlpha.terminal?.write(Uint8Array.of(control("b"), "d".charCodeAt(0)))
+      expect(await withTimeout(secondAlpha.exited, 6_000, "final associated Client did not detach")).toBe(0)
+      secondAlpha.terminal?.close()
       const ended = await companion.settle(runtimeName, 8_000)
       expect(ended.state).toBe("exited")
-      await companion.forget(runtimeName)
       await waitUntil(
         async () => (await orientation(temporaryDirectory, baseEnv, "alpha")) === null,
         5_000,
         () => "ended Runtime bridge remained reachable",
       )
+      expect(await companion.inspect(agentName)).toMatchObject({
+        state: "live",
+        pid: initialAgentSession.pid,
+      })
 
       const restartedOutput = { output: "" }
       restartedAlpha = spawnClient(
@@ -481,11 +445,14 @@ test.skipIf(!PTY_TEST_ENABLED)(
         restartedOutput,
         alphaExtensionEnv,
         ["--agent-picker", "--hide-single-agent-picker"],
+        82,
+        20,
       )
       await waitUntil(
         async () => {
           const snapshot = await orientation(temporaryDirectory, baseEnv, "alpha")
           return snapshot !== null && snapshot.fmx.pid !== runtimePid &&
+            snapshot.fmx.cols === 82 && snapshot.fmx.rows === 20 &&
             snapshot.agents.some((agent) => agent.agent_id === created.agent.agent_id)
         },
         15_000,
@@ -498,14 +465,45 @@ test.skipIf(!PTY_TEST_ENABLED)(
         5_000,
         () => "restarted Runtime did not repeat exact extension readiness",
       )
+      expect(await companion.inspect(agentName)).toMatchObject({
+        state: "live",
+        pid: initialAgentSession.pid,
+      })
       restartedAlpha.terminal?.write(Uint8Array.of(control("b"), "d".charCodeAt(0)))
       expect(await withTimeout(restartedAlpha.exited, 6_000, "restarted Client did not detach")).toBe(0)
       restartedAlpha.terminal?.close()
-      expect(await orientation(temporaryDirectory, baseEnv, "alpha")).not.toBeNull()
+      await waitUntil(
+        async () => (await orientation(temporaryDirectory, baseEnv, "alpha")) === null,
+        8_000,
+        () => restartedOutput.output,
+      )
+
+      // Starting the absent peer later is independent and succeeds; it never
+      // had to exist for alpha's readiness or restart.
+      const betaOutput = { output: "" }
+      beta = spawnClient("beta", betaOutput, {
+        FMX_FIXTURE_EXTENSION_LOG: betaExtensionLog,
+        FMX_FIXTURE_EXTENSION_MODE: "ready",
+        FMX_FIXTURE_EXTENSION_AUTO_SNAPSHOT: "1",
+      })
+      await waitUntil(
+        async () => (await orientation(temporaryDirectory, baseEnv, "beta")) !== null,
+        12_000,
+        () => betaOutput.output,
+      )
+      expect(await orientation(temporaryDirectory, baseEnv, "alpha")).toBeNull()
+      beta.terminal?.write(Uint8Array.of(control("b"), "d".charCodeAt(0)))
+      expect(await withTimeout(beta.exited, 6_000, "peer Client did not detach")).toBe(0)
+      beta.terminal?.close()
+      await waitUntil(
+        async () => (await orientation(temporaryDirectory, baseEnv, "beta")) === null,
+        8_000,
+        () => betaOutput.output,
+      )
     } finally {
       if (alpha.exitCode === null) alpha.kill("SIGKILL")
       alpha.terminal?.close()
-      for (const client of [secondAlpha, thirdAlpha, restartedAlpha, beta]) {
+      for (const client of [secondAlpha, restartedAlpha, beta]) {
         if (client?.exitCode === null) client.kill("SIGKILL")
         client?.terminal?.close()
       }
@@ -575,8 +573,16 @@ test.skipIf(!PTY_TEST_ENABLED)(
       alpha.terminal?.write(Uint8Array.of(control("b"), "d".charCodeAt(0)))
       expect(await withTimeout(alpha.exited, 6_000, "alpha peer Client did not detach")).toBe(0)
       alpha.terminal?.close()
-      expect(await orientation(temporaryDirectory, env, "beta")).not.toBeNull()
-      expect(await orientation(temporaryDirectory, env, "alpha")).not.toBeNull()
+      await waitUntil(
+        async () => (await orientation(temporaryDirectory, env, "beta")) === null,
+        8_000,
+        () => betaOutput.value,
+      )
+      await waitUntil(
+        async () => (await orientation(temporaryDirectory, env, "alpha")) === null,
+        8_000,
+        () => alphaOutput.value,
+      )
     } finally {
       if (beta.exitCode === null) beta.kill("SIGKILL")
       beta.terminal?.close()

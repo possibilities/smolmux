@@ -52,7 +52,7 @@ test("Runtime identity is stable per Home and creation requests final-Client own
   })
 })
 
-test("cold preparation can retain an associated Runtime while plain creation remains unchanged", async () => {
+test("cold preparation preserves associated startup authority and final-Client ownership", async () => {
   const identity = runtimeSessionIdentity(HOME, "/tmp/fmx-runtime-associated-test")
   const created: CreateRequest[] = []
   const companion = {
@@ -72,11 +72,10 @@ test("cold preparation can retain an associated Runtime while plain creation rem
     prepareCreation: async () => ({
       env: { FMX_RUNTIME_STARTUP_SNAPSHOT: "accepted" },
       labels: { extension: "fixture", workplace: "office" },
-      exitOnLastClient: false,
     }),
   })
   expect(created[0]).toMatchObject({
-    exitOnLastClient: false,
+    exitOnLastClient: true,
     labels: { ...identity.labels, extension: "fixture", workplace: "office" },
     env: {
       PATH: "/bin",

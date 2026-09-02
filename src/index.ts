@@ -449,7 +449,6 @@ async function startTerminalClient(
       const startup = await resolveRuntimeStartupSnapshot(loadedConfig, home)
       return {
         env: runtimeStartupEnvironment(startup),
-        exitOnLastClient: startup.runtimeExtension === null,
         labels: startup.runtimeExtension === null
           ? undefined
           : {
