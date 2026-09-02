@@ -358,6 +358,12 @@ async function main(): Promise<void> {
             lifecycleRuntime!.acceptInlineSource(request, signal),
           onManagedLaunchMessage: (message, signal) =>
             lifecycleRuntime!.acceptManagedLaunch(message, signal),
+          onDiagnostic: (error) => {
+            process.stderr.write(
+              `fmx: Runtime extension generation ${error.generation ?? "unknown"} degraded ` +
+                `(${error.code}): ${error.message}\n`,
+            )
+          },
           onRestartReady: async () => {
             if (runtimeClosing) return
             try {
