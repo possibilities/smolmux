@@ -262,6 +262,31 @@ describe("production lifecycle Runtime composition", () => {
     }
   })
 
+  test("reports an unreplayable claim and finishes the recovery pass", async () => {
+    const fixture = await lifecycleFixture("ensure-a", "launch-a", "manifest-replay-unbound")
+    const harness = await runtimeHarness(fixture, {
+      preloadManifestClaim: true,
+      unboundInlineSource: true,
+    })
+    try {
+      // One record with no exact source must not end the pass: the throw it
+      // used to raise escaped recovery and took the whole Runtime down.
+      await harness.runtime.recover()
+      expect(harness.errors.map(String).join("\n")).toContain(
+        "has no exact Fx state root for Manifest replay",
+      )
+      expect(harness.multiplexer.claims).toEqual([])
+      expect(harness.multiplexer.starts).toEqual([])
+      expect(harness.manifest.get(fixture.ensure.agent_id)).toBeNull()
+      // The claim is left durable for a later start that can resolve it.
+      expect((await harness.ensureLedger.get(fixture.ensure.ensure_id))?.stage).toBe(
+        "manifest_claimed",
+      )
+    } finally {
+      await harness.runtime.close()
+    }
+  })
+
   test("retains receipts when the publisher binds after startup, then replays them", async () => {
     const fixture = await lifecycleFixture("ensure-a", "launch-a", "publisher-replay")
     const harness = await runtimeHarness(fixture, { bindPublisher: false })
@@ -988,6 +1013,8 @@ async function runtimeHarness(
     fmxSession?: string
     providerEnvironment?: Record<string, string>
     preloadManifestClaim?: boolean
+    /** Leave the preloaded inline source unbound, so no exact source is recoverable. */
+    unboundInlineSource?: boolean
     bindPublisher?: boolean
     projectionGate?: Promise<void>
     retirementGate?: Promise<void>
@@ -1012,7 +1039,9 @@ async function runtimeHarness(
   if (choices.preloadManifestClaim) {
     await preloadedSourceLedger!.claim(fixture.source)
     await preloadedEnsureLedger!.claim(fixture.ensure)
-    await preloadedSourceLedger!.bindEnsureRequestForEnsure(fixture.ensure)
+    if (!choices.unboundInlineSource) {
+      await preloadedSourceLedger!.bindEnsureRequestForEnsure(fixture.ensure)
+    }
     await preloadedEnsureLedger!.advance(fixture.ensure.ensure_id, {
       kind: "worktree_created",
       directory: fixture.ensure.planned_worktree.directory,

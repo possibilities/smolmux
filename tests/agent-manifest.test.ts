@@ -179,6 +179,60 @@ test("an exact predetermined claim replays in place and a conflicting claim is r
   })
 })
 
+test("a claim written before state roots existed adopts the root its replay carries", async () => {
+  await withDirectory(async (dir) => {
+    const path = join(dir, "legacy.json")
+    const identity = identityFor("9".repeat(32))
+    const workControl = {
+      socketPath: `/tmp/fmx-managed.${identity.agentId}.fx`,
+      instanceId: identity.agentId,
+      token: "ab".repeat(32),
+    }
+    // Exactly what a build from before the state root was recorded leaves on
+    // disk: an upgrade across that change finds this entry and replays it.
+    await writeFile(path, `${JSON.stringify({
+      version: 1,
+      homeId: HOME,
+      nextDisplayId: 2,
+      agents: [{
+        ...identity,
+        displayId: 1,
+        cwd: "/work",
+        fxPath: "/usr/local/bin/fx",
+        fxArgs: [],
+        createdAt: 1_787_420_000_000,
+        fxSessionId: null,
+        workControl,
+        phase: "creating",
+      }],
+    }, null, 2)}\n`)
+    const manifest = await AgentManifest.open(path, HOME)
+    expect(manifest.get(identity.agentId)!.fxStateRoot).toBeNull()
+
+    const fxStateRoot = "/var/tmp/fmx-managed-state"
+    const input = { ...params(), identity, workControl, fxStateRoot }
+    const replay = manifest.ensureClaim(input)
+    await replay.saved
+
+    // Accepted, and adopted rather than merely tolerated: the write carries
+    // the root, so every later replay compares exactly.
+    expect(replay.result.fxStateRoot).toBe(fxStateRoot)
+    expect(manifest.entries).toHaveLength(1)
+    expect((await loadManifest(path, HOME)).agents[0]!.fxStateRoot).toBe(fxStateRoot)
+    const again = manifest.ensureClaim(input)
+    await again.saved
+    expect(again.result).toEqual(replay.result)
+
+    // A genuinely different non-null root is still a conflict, and the
+    // refusal leaves the adopted root on disk.
+    expect(() => manifest.ensureClaim({
+      ...input,
+      fxStateRoot: "/var/tmp/fmx-other-managed-state",
+    })).toThrow("conflicting manifest claim")
+    expect((await loadManifest(path, HOME)).agents[0]!.fxStateRoot).toBe(fxStateRoot)
+  })
+})
+
 test("an adopted Agent's arguments may be unknown, and that survives a reload", async () => {
   await withDirectory(async (dir) => {
     const path = join(dir, "m.json")
