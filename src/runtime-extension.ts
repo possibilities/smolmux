@@ -1420,7 +1420,7 @@ export class RuntimeExtensionSupervisor {
       try {
         assertHostToChildMessage(next, "outbound Runtime-extension link message")
         frame = schemaIdOf(next) === MANAGED_LAUNCH_SCHEMA_ID
-          ? encodeManagedLaunchFrame(next as ManagedLaunchOutcome)
+          ? encodeManagedLaunchFrame(next as ManagedLaunchOutcome | ManagedLaunchTerminalReceipt)
           : encodeAgentWorkplaceFrame(next as AgentWorkplaceMessage)
       } catch (error) {
         throw {
@@ -1706,6 +1706,10 @@ function assertHostToChildMessage(message: unknown, label: string): void {
   if (managed.success) {
     if (managed.data.message_type === "launch_outcome") {
       parseManagedLaunchOutcome(managed.data)
+      return
+    }
+    if (managed.data.message_type === "terminal_receipt") {
+      parseManagedLaunchTerminalReceipt(managed.data)
       return
     }
     throw new RuntimeExtensionError(

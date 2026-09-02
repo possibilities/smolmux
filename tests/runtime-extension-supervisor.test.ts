@@ -32,13 +32,20 @@ import {
   type InlineLaunchSourceRequest,
 } from "../src/inline-launch-source.ts"
 import {
+  deriveManagedLaunchTerminalReceiptDigest,
+  deriveManagedLaunchTerminalReceiptId,
   deriveManagedLaunchEnsureDigest,
   deriveManagedLaunchOutcomeDigest,
   deriveManagedLaunchSourceDigest,
+  type ManagedLaunchTerminalReceipt,
   type ManagedLaunchOutcome,
   type ManagedLaunchRequest,
   type ManagedLaunchRetry,
 } from "../src/managed-launch-contract.ts"
+import {
+  deriveFxFinalReceiptDigest,
+  type FxFinalReceipt,
+} from "../src/ensure-lifecycle-ledger.ts"
 
 const FIXTURE = fileURLToPath(new URL("./fixtures/runtime-extension.ts", import.meta.url))
 const PEER = fileURLToPath(new URL("./runtime-extension-supervisor-child.ts", import.meta.url))
@@ -457,6 +464,24 @@ describe("Runtime-extension managed-launch transport", () => {
     expect(supervisor.state).toBe("ready")
   })
 
+  test("publishes an exact managed terminal receipt to the extension without degrading the link", async () => {
+    const directory = await temporaryDirectory()
+    const log = join(directory, "managed-terminal.log")
+    const receipt = managedTerminalReceipt(managedLaunchRequest())
+    const supervisor = await startSupervisor(PEER, "ready", {
+      env: { FMX_SUPERVISOR_CHILD_LOG: log },
+    })
+
+    await supervisor.publishManagedLaunchTerminalReceipt(receipt)
+
+    const received = await waitForMessages(
+      log,
+      (messages) => messages.some((message) => message.message_type === "terminal_receipt"),
+    )
+    expect(received.find((message) => message.message_type === "terminal_receipt")).toEqual(receipt)
+    expect(supervisor.state).toBe("ready")
+  })
+
   test("coalesces an exact managed-launch replay while its first admission is in flight", async () => {
     const request = managedLaunchRequest()
     const release = deferred<void>()
@@ -527,6 +552,23 @@ describe("Runtime-extension managed-launch transport", () => {
       disconnected.promise,
       1_000,
       "reverse managed outcome was not rejected",
+    )
+    expect(error.code).toBe("protocol_error")
+    expect(error.message).toContain("extension-to-Runtime direction")
+  })
+
+  test("rejects managed terminal receipts in the child-to-host direction", async () => {
+    const receipt = managedTerminalReceipt(managedLaunchRequest())
+    const disconnected = deferred<RuntimeExtensionError>()
+    await startSupervisor(PEER, "ready", {
+      env: { FMX_SUPERVISOR_CHILD_SCRIPT: JSON.stringify([receipt]) },
+      onManagedLaunchMessage: () => {},
+      onDisconnect: disconnected.resolve,
+    })
+    const error = await withTestTimeout(
+      disconnected.promise,
+      1_000,
+      "reverse managed terminal receipt was not rejected",
     )
     expect(error.code).toBe("protocol_error")
     expect(error.message).toContain("extension-to-Runtime direction")
@@ -1253,6 +1295,47 @@ function managedLaunchFailure(request: ManagedLaunchRequest): ManagedLaunchOutco
   }
   outcome.receipt_digest = deriveManagedLaunchOutcomeDigest(outcome)
   return outcome
+}
+
+function managedTerminalReceipt(request: ManagedLaunchRequest): ManagedLaunchTerminalReceipt {
+  const finalWithoutDigest = {
+    schema_id: "fx.launch-admission-final",
+    schema_version: 1,
+    message_type: "final_receipt",
+    receipt_id: `fx-final-${request.ensure_id}`,
+    receipt_digest: "0".repeat(64),
+    launch_id: request.launch_id,
+    launch_digest: request.launch_digest,
+    admission_key: request.source.admission_key,
+    conversation_id: "transport-managed-conversation",
+    outcome: { kind: "exited", code: 0 },
+    observed_at: "2026-09-02T12:00:00.000Z",
+    retained_until_acknowledged: true,
+  } as FxFinalReceipt
+  const finalReceipt = {
+    ...finalWithoutDigest,
+    receipt_digest: deriveFxFinalReceiptDigest(finalWithoutDigest),
+  }
+  const receipt = {
+    schema_id: "fmx.managed-launch",
+    schema_version: 1,
+    message_type: "terminal_receipt",
+    receipt_id: "pending-terminal-receipt",
+    receipt_digest: "0".repeat(64),
+    workplace_instance_id: request.workplace_instance_id,
+    fmx_session: request.fmx_session,
+    ensure_id: request.ensure_id,
+    ensure_digest: request.ensure_digest,
+    launch_id: request.launch_id,
+    launch_digest: request.launch_digest,
+    agent_id: request.agent_id,
+    attempt: 1,
+    fx_final_receipt: finalReceipt,
+    retained_until_acknowledged: true,
+  } as ManagedLaunchTerminalReceipt
+  receipt.receipt_id = deriveManagedLaunchTerminalReceiptId(receipt)
+  receipt.receipt_digest = deriveManagedLaunchTerminalReceiptDigest(receipt)
+  return receipt
 }
 
 function managedLaunchRetry(outcome: ManagedLaunchOutcome): ManagedLaunchRetry {
