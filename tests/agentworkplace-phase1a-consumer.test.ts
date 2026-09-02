@@ -14,7 +14,12 @@ import {
 } from "./fixtures/agentworkplace-phase1a-fx-consumer.ts"
 
 const roots: string[] = []
-const INSTALLED_FX = join(process.env.HOME ?? "", ".local", "bin", "fmx-fx")
+// A current fmx installation intentionally advances beyond the frozen Phase
+// 1A supplier. Gates may stage that retained fixture explicitly without
+// replacing HOME or the current installed fmx-fx; the fixture still verifies
+// its exact mode, byte length, and digest before executing a private snapshot.
+const INSTALLED_FX = process.env.FMX_PHASE1A_FX_FIXTURE_PATH ??
+  join(process.env.HOME ?? "", ".local", "bin", "fmx-fx")
 const EXPECTED_INSTALLED_FX: Phase1aFxIdentity = {
   bytes: 11_114_368,
   commit: "2b88952d123868c36407ef284917ad3e0522ee2f",
