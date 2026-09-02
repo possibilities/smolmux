@@ -104,6 +104,7 @@ function claim(agentId = AGENT_ID): ManagedAgentClaim {
     cwd: CWD,
     fxPath: FX,
     fxArgs: ["--managed"],
+    fxStateRoot: "/var/tmp/fmx-managed-state",
     createdAt: 1234,
     workControl: {
       socketPath: `/tmp/fmx-managed.${agentId}.fx`,

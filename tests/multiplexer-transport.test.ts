@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { BoxRenderable } from "@opentui/core"
 import { createTestRenderer } from "@opentui/core/testing"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -11,7 +11,7 @@ import type { AgentExit, AgentTransport, TerminalSize, TransportHandlers } from 
 import type { Snapshot } from "../src/control-protocol.ts"
 import { resolveKeybindings } from "../src/keybindings.ts"
 import { Multiplexer } from "../src/multiplexer.ts"
-import { TestAdeSocket } from "./fixtures/ade-feed.ts"
+import { record as feedRecord, TestAdeSocket } from "./fixtures/ade-feed.ts"
 import { createAgent } from "./fixtures/agent-start.ts"
 import { agentOptions, type PtyTransport } from "./fixtures/pty-transport.ts"
 
@@ -347,6 +347,102 @@ test("publishes restored Session-list metadata only after attaching transports",
     expect(snapshot.tray.rows.some((row) => row.kind === "branch")).toBe(true)
   } finally {
     await multiplexer.shutdown()
+  }
+})
+
+test("restores every durable managed session name from its Manifest Fx state root", async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), "fmx-managed-session-name-"))
+  const runtimeHome = join(temporaryDirectory, "home")
+  const stateRoot = join(temporaryDirectory, "state")
+  const manifestPath = join(temporaryDirectory, "agents.json")
+  const homeId = "managed-session-name"
+  const startupSession = "1787362101500-1787362101500156000-2897385323da2700"
+  const changedSession = "1787362101501-1787362101501156000-2897385323da2701"
+  const snapshotSession = "1787362101502-1787362101502156000-2897385323da2702"
+  const writeName = async (sessionId: string, title: string) => {
+    const directory = join(stateRoot, ".fx", "sessions", sessionId)
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, "display.json"), `${JSON.stringify({ title })}\n`)
+  }
+
+  await mkdir(runtimeHome, { recursive: true })
+  await writeName(startupSession, "Restored after Runtime restart")
+  const initialManifest = await AgentManifest.open(manifestPath, homeId)
+  const pending = initialManifest.claim({
+    cwd: process.cwd(),
+    fxPath: FAKE_FX,
+    fxArgs: null,
+    fxStateRoot: stateRoot,
+    createdAt: 1,
+  })
+  await pending.saved
+  await initialManifest.setFxSessionId(pending.result.agentId, startupSession)
+  await initialManifest.markRunning(pending.result.agentId)
+
+  // Reopen the durable Manifest to model final-Client Runtime reconstruction.
+  const manifest = await AgentManifest.open(manifestPath, homeId)
+  const survivor = manifest.entries[0]!
+  const setup = await createTestRenderer({ width: 100, height: 30, kittyKeyboard: true, exitOnCtrlC: false })
+  const options = agentOptions()
+  options.transport.attachBehavior = () => ({ bind() {}, write() {}, resize() {}, detach() {} })
+  const adeSocket = new TestAdeSocket(`/tmp/fmx-managed-session-name-${process.pid}.ade.sock`)
+  const multiplexer = new Multiplexer(setup.renderer, {
+    ...options,
+    home: runtimeHome,
+    manifest,
+    fxPath: FAKE_FX,
+    cwd: process.cwd(),
+    keybindings: resolveKeybindings().keybindings,
+    adeSocket,
+    survivors: [survivor],
+  })
+
+  try {
+    await multiplexer.start()
+    const orient = () => multiplexer.control.handle("orient", {}, NEVER) as Promise<Snapshot>
+    expect((await orient()).agents[0]?.name).toBe("Restored after Runtime restart")
+
+    // A main-session identity change reads the same retained state root.
+    await writeName(changedSession, "Recovered after identity change")
+    adeSocket.emit(feedRecord("SessionChanged", {
+      sequence: 1,
+      instanceId: survivor.agentId,
+      sessionId: changedSession,
+      state: "idle",
+    }))
+    expect((await orient()).agents[0]?.name).toBe("Recovered after identity change")
+
+    // A sequence gap re-reads the active session from that root too.
+    await writeName(changedSession, "Recovered after ADE gap")
+    adeSocket.emit(feedRecord("FutureObservation", {
+      sequence: 3,
+      instanceId: survivor.agentId,
+      sessionId: changedSession,
+      state: "idle",
+    }))
+    expect((await orient()).agents[0]?.name).toBe("Recovered after ADE gap")
+
+    // A Runtime-member snapshot can fill a sidecar that landed after the
+    // identity event, without consulting the deliberately empty Runtime HOME.
+    adeSocket.emit(feedRecord("SessionChanged", {
+      sequence: 4,
+      instanceId: survivor.agentId,
+      sessionId: snapshotSession,
+      state: "idle",
+    }))
+    expect((await orient()).agents[0]?.name).toBeNull()
+    await writeName(snapshotSession, "Recovered for Runtime snapshot")
+    expect(await multiplexer.extension.snapshot()).toMatchObject({
+      agents: [{
+        fx_conversation: {
+          conversation_id: snapshotSession,
+          name: "Recovered for Runtime snapshot",
+        },
+      }],
+    })
+  } finally {
+    await multiplexer.shutdown()
+    await rm(temporaryDirectory, { recursive: true, force: true })
   }
 })
 

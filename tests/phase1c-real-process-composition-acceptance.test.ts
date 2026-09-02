@@ -395,6 +395,7 @@ class RealProcessMultiplexer implements LifecycleRuntimeMultiplexer {
       cwd: claim.cwd,
       fxPath: claim.fxPath,
       fxArgs: claim.fxArgs,
+      fxStateRoot: claim.fxStateRoot,
       workControl: claim.workControl,
       createdAt: existing?.createdAt ?? claim.createdAt ?? Date.now(),
     })

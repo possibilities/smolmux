@@ -235,6 +235,7 @@ export type ManagedAgentClaim = {
   cwd: string
   fxPath: string
   fxArgs: string[] | null
+  fxStateRoot: string
   workControl: FxWorkControlBinding
   createdAt?: number
   focus?: boolean
@@ -900,6 +901,7 @@ export class Multiplexer {
       cwd: claim.cwd,
       fxPath: claim.fxPath,
       fxArgs: claim.fxArgs,
+      fxStateRoot: claim.fxStateRoot,
       createdAt: existing?.createdAt ?? claim.createdAt ?? Date.now(),
       workControl: claim.workControl,
     })
@@ -1134,7 +1136,7 @@ export class Multiplexer {
       agent.id,
       checkpoint?.seen === false ? Math.max(0, record.stateSeq - 1) : record.stateSeq,
     )
-    if (entry.fxSessionId) this.sessionNames.recover(entry.fxSessionId)
+    if (entry.fxSessionId) this.sessionNames.recover(entry.fxSessionId, entry.fxStateRoot)
     this.refreshAgentNavigation()
     return agent
   }
@@ -1579,7 +1581,7 @@ export class Multiplexer {
         entry.fxSessionId &&
         this.sessionNames.nameFor(entry.fxSessionId) === null
       ) {
-        this.sessionNames.recover(entry.fxSessionId)
+        this.sessionNames.recover(entry.fxSessionId, entry.fxStateRoot)
       }
     }
     this.refreshExtensionRevision()
@@ -1986,7 +1988,7 @@ export class Multiplexer {
       const recoverySession = this.sessionIdOf(agent)
       // Installing a different identity already reads its durable sidecar.
       if (recoverySession && !contextualIdentityChanged) {
-        changed = this.sessionNames.recover(recoverySession) || changed
+        changed = this.sessionNames.recover(recoverySession, agent.entry.fxStateRoot) || changed
       }
     }
     if (record.context.agentRole !== "main") {
@@ -2031,7 +2033,9 @@ export class Multiplexer {
     if (identityChanged) {
       void this.options.manifest.setFxSessionId(agent.entry.agentId, sessionId).catch(() => {})
     }
-    const recovered = identityChanged && sessionId ? this.sessionNames.recover(sessionId) : false
+    const recovered = identityChanged && sessionId
+      ? this.sessionNames.recover(sessionId, agent.entry.fxStateRoot)
+      : false
     return previous !== sessionId || recovered
   }
 
@@ -2733,6 +2737,16 @@ function assertManagedClaim(claim: ManagedAgentClaim): void {
   }
   if (claim.fxPath.length === 0 || claim.fxArgs?.some((value) => typeof value !== "string")) {
     throw new Error(`managed Agent ${claim.agentId} has invalid Fx launch metadata`)
+  }
+  if (
+    typeof claim.fxStateRoot !== "string" ||
+    !isAbsolute(claim.fxStateRoot) ||
+    normalize(claim.fxStateRoot) !== claim.fxStateRoot ||
+    claim.fxStateRoot === "/" ||
+    Buffer.byteLength(claim.fxStateRoot, "utf8") > 4096 ||
+    /[\u0000-\u001f\u007f-\u009f]/u.test(claim.fxStateRoot)
+  ) {
+    throw new Error(`managed Agent ${claim.agentId} has an invalid Fx state root`)
   }
   if (
     claim.createdAt !== undefined &&

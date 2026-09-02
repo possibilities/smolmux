@@ -55,6 +55,7 @@ test("parsing keeps valid entries and drops each bad one on its own", () => {
       { ...identityFor("d".repeat(32)), displayId: 7, cwd: "relative", fxPath: "/fx", fxArgs: [], createdAt: 1, phase: "creating" },
       { ...identityFor("e".repeat(32)), displayId: 8, cwd: "/w", fxPath: "/fx", fxArgs: [1], createdAt: 1, phase: "creating" },
       { ...identityFor("f".repeat(32)), displayId: 9, cwd: "/w", fxPath: "/fx", fxArgs: [], createdAt: 1, phase: "dancing" },
+      { ...identityFor("1".repeat(32)), displayId: 10, cwd: "/w", fxPath: "/fx", fxArgs: [], fxStateRoot: "relative", createdAt: 1, phase: "running" },
       "garbage",
     ],
   }
@@ -63,6 +64,8 @@ test("parsing keeps valid entries and drops each bad one on its own", () => {
   expect(manifest.agents[0]!.fxSessionId).toBe("s1")
   // A Manifest written before status checkpoints existed remains valid.
   expect(manifest.agents[0]!.agentStatus).toBeNull()
+  // A Manifest written before managed state roots existed keeps HOME fallback.
+  expect(manifest.agents[0]!.fxStateRoot).toBeNull()
   // The counter never hands out a number an entry already holds.
   expect(manifest.nextDisplayId).toBe(5)
 })
@@ -157,7 +160,7 @@ test("an exact predetermined claim replays in place and a conflicting claim is r
       instanceId: identity.agentId,
       token: "cd".repeat(32),
     }
-    const input = { ...params(), identity, workControl }
+    const input = { ...params(), identity, workControl, fxStateRoot: "/var/tmp/fmx-managed-state" }
     const first = manifest.ensureClaim(input)
     await first.saved
     const replay = manifest.ensureClaim({ ...input, createdAt: input.createdAt + 1 })
@@ -169,6 +172,10 @@ test("an exact predetermined claim replays in place and a conflicting claim is r
     expect(() => manifest.ensureClaim({ ...input, cwd: "/other" })).toThrow(
       "conflicting manifest claim",
     )
+    expect(() => manifest.ensureClaim({
+      ...input,
+      fxStateRoot: "/var/tmp/fmx-other-managed-state",
+    })).toThrow("conflicting manifest claim")
   })
 })
 

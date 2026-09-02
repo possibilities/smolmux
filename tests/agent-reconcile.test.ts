@@ -18,6 +18,7 @@ const entry = (agentId: string, phase: ManifestEntry["phase"] = "running"): Mani
   cwd: "/work",
   fxPath: "/fx",
   fxArgs: [],
+  fxStateRoot: null,
   createdAt: 0,
   fxSessionId: null,
   agentStatus: null,

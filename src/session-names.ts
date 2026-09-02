@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs"
+import { isAbsolute, join, normalize } from "node:path"
 import { fxSessionDirectory, isSessionId } from "./fx-sessions.ts"
 
 export const NATIVE_SESSION_NAME_MAX_BYTES = 240
@@ -31,9 +32,9 @@ export class SessionNames {
   }
 
   /** Re-read fx's durable authority after startup, identity change, or a feed gap. */
-  recover(sessionId: string): boolean {
+  recover(sessionId: string, stateRoot: string | null = null): boolean {
     if (!isSessionId(sessionId)) return false
-    const name = readNativeSessionName(sessionId, this.env)
+    const name = readNativeSessionName(sessionId, this.env, stateRoot)
     if (name === null) return this.names.delete(sessionId)
     return this.apply(sessionId, name)
   }
@@ -46,8 +47,11 @@ export class SessionNames {
 export function readNativeSessionName(
   sessionId: string,
   env: NodeJS.ProcessEnv = process.env,
+  stateRoot: string | null = null,
 ): string | null {
-  const directory = fxSessionDirectory(sessionId, env)
+  const directory = stateRoot === null
+    ? fxSessionDirectory(sessionId, env)
+    : stateRootSessionDirectory(sessionId, stateRoot)
   if (!directory) return null
   let value: unknown
   try {
@@ -57,6 +61,18 @@ export function readNativeSessionName(
   }
   if (!isRecord(value) || typeof value.title !== "string") return null
   return nativeSessionName(value.title)
+}
+
+function stateRootSessionDirectory(sessionId: string, stateRoot: string): string | null {
+  if (
+    !isSessionId(sessionId) ||
+    !isAbsolute(stateRoot) ||
+    stateRoot === "/" ||
+    normalize(stateRoot) !== stateRoot ||
+    Buffer.byteLength(stateRoot, "utf8") > 4096 ||
+    /[\u0000-\u001f\u007f-\u009f]/u.test(stateRoot)
+  ) return null
+  return join(stateRoot, ".fx", "sessions", sessionId)
 }
 
 export function nativeSessionName(raw: string): string | null {

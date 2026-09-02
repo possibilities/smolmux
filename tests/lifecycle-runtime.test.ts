@@ -49,6 +49,7 @@ import {
 } from "../src/lifecycle-runtime.ts"
 import type { AgentDefaults } from "../src/config.ts"
 import { mintFxWorkControlBinding } from "../src/fx-work-control.ts"
+import { readGitContext } from "../src/git-context.ts"
 import {
   deriveManagedLaunchEnsureDigest,
   deriveManagedLaunchSourceDigest,
@@ -58,6 +59,7 @@ import {
   type ManagedLaunchTerminalReceipt,
 } from "../src/managed-launch-contract.ts"
 import type { ManagedAgentClaim, ManagedAgentInvocation } from "../src/multiplexer.ts"
+import { readHeadCommit } from "../src/worktree.ts"
 
 const CONTRACTS = resolve(import.meta.dir, "../contracts/agentworkplace/v1")
 const temporaryDirectories: string[] = []
@@ -83,6 +85,9 @@ describe("production lifecycle Runtime composition", () => {
         "prepare", "build", "inspect", "prepare", "build", "inspect",
       ])
       expect(harness.multiplexer.claims).toHaveLength(1)
+      expect(harness.multiplexer.claims[0]?.fxStateRoot).toBe(
+        fixture.source.launch_request.state_root,
+      )
       expect(harness.multiplexer.starts).toHaveLength(1)
       const invocation = harness.multiplexer.starts[0]!
       expect(invocation.command).toEqual([
@@ -243,6 +248,9 @@ describe("production lifecycle Runtime composition", () => {
       if (workControl === null) throw new Error("projection did not recreate Work-control")
       expect(workControl.token).toHaveLength(64)
       expect(harness.multiplexer.claims).toHaveLength(1)
+      expect(harness.multiplexer.claims[0]?.fxStateRoot).toBe(
+        fixture.source.launch_request.state_root,
+      )
     } finally {
       await harness.runtime.close()
     }
@@ -387,6 +395,9 @@ describe("production lifecycle Runtime composition", () => {
     const fixture = await lifecycleFixture("ensure-a", "launch-a", "managed-correlation-carrier")
     const harness = await runtimeHarness(fixture, { preloadedManagedRequest: request })
     try {
+      expect(harness.manifest.get(request.agent_id)?.fxStateRoot).toBe(
+        request.source.launch_request.state_root,
+      )
       expect(await harness.runtime.correlationSource.snapshot()).toEqual([{
         agent_id: request.agent_id,
         correlation: {
@@ -396,6 +407,43 @@ describe("production lifecycle Runtime composition", () => {
           launch_digest: request.launch_digest,
         },
       }])
+    } finally {
+      await harness.runtime.close()
+    }
+  })
+
+  test("direct managed launch claims retain the frozen Fx state root before Companion start", async () => {
+    const candidate = await managedRuntimeFixture("managed-root")
+    const directory = await realpath(process.cwd())
+    const context = await readGitContext(directory)
+    if (context === null) throw new Error("test checkout has no Git context")
+    candidate.workspace.directory = directory
+    candidate.workspace.repository = context.mainRoot
+    candidate.workspace.checkout_root = context.root
+    candidate.workspace.head_commit = await readHeadCommit(directory)
+    candidate.source.launch_request.directory = directory
+    candidate.source.launch_request.launch_digest = deriveFrozenLaunchDigest(
+      candidate.source.launch_request,
+    )
+    candidate.launch_digest = candidate.source.launch_request.launch_digest
+    candidate.source.source_digest = deriveManagedLaunchSourceDigest(candidate)
+    candidate.ensure_digest = deriveManagedLaunchEnsureDigest(candidate)
+    const request = parseManagedLaunchRequest(candidate)
+    const carrier = await lifecycleFixture("ensure-a", "launch-a", "managed-root-carrier")
+    const harness = await runtimeHarness(carrier, { fmxSession: request.fmx_session })
+    try {
+      await harness.runtime.acceptManagedLaunch(request)
+      await harness.runtime.recover()
+      await waitFor(() => harness.multiplexer.claims.length === 1)
+      expect(harness.multiplexer.claims[0]?.fxStateRoot).toBe(
+        request.source.launch_request.state_root,
+      )
+      expect(harness.manifest.get(request.agent_id)?.fxStateRoot).toBe(
+        request.source.launch_request.state_root,
+      )
+      // This fixture's provider deliberately speaks the carrier correlation;
+      // the root proof stops at the required pre-Companion Manifest barrier.
+      expect(harness.multiplexer.starts).toHaveLength(0)
     } finally {
       await harness.runtime.close()
     }
@@ -813,6 +861,7 @@ async function runtimeHarness(
       cwd: request.workspace.directory,
       fxPath: "/resolved/fmx-fx",
       fxArgs: null,
+      fxStateRoot: request.source.launch_request.state_root,
       workControl: workControlBinding,
       createdAt: 1,
     })
@@ -925,6 +974,7 @@ class FakeMultiplexer implements LifecycleRuntimeMultiplexer {
       cwd: claim.cwd,
       fxPath: claim.fxPath,
       fxArgs: claim.fxArgs,
+      fxStateRoot: claim.fxStateRoot,
       workControl: claim.workControl,
       createdAt: claim.createdAt ?? 1,
     })

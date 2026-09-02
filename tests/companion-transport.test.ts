@@ -94,6 +94,7 @@ const restoredEntry = (agentId = "d".repeat(32)): ManifestEntry => ({
   cwd: "/work",
   fxPath: "/fx",
   fxArgs: [],
+  fxStateRoot: null,
   createdAt: 1,
   fxSessionId: null,
   agentStatus: null,

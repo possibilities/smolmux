@@ -357,6 +357,10 @@ export class LifecycleRuntime {
     for (const record of durable) {
       if (this.closed) return
       if (record.stage !== "manifest_claimed") continue
+      const source = await this.sources.sourceForEnsure(record.request)
+      if (source === null) {
+        throw new Error(`ensure ${record.request.ensure_id} has no exact Fx state root for Manifest replay`)
+      }
       const existing = this.options.manifest.get(record.request.agent_id)
       const workControl = existing?.workControl ?? mintFxWorkControlBinding(
         this.options.runtimeSocketPath,
@@ -367,6 +371,7 @@ export class LifecycleRuntime {
         cwd: record.request.planned_worktree.directory,
         fxPath: this.options.fxPath,
         fxArgs: existing?.fxArgs ?? null,
+        fxStateRoot: source.launch_request.state_root,
         workControl,
         createdAt: existing?.createdAt,
         focus: false,
@@ -390,6 +395,7 @@ export class LifecycleRuntime {
         cwd: record.request.workspace.directory,
         fxPath: this.options.fxPath,
         fxArgs: existing?.fxArgs ?? null,
+        fxStateRoot: record.request.source.launch_request.state_root,
         workControl,
         createdAt: existing?.createdAt,
         focus: false,
@@ -471,7 +477,7 @@ export class LifecycleRuntime {
         },
       },
       manifest: {
-        claim: async ({ request }) => {
+        claim: async ({ request, source }) => {
           const app = this.requireMultiplexer()
           const existing = this.options.manifest.get(request.agent_id)
           const binding = existing?.workControl ?? mintFxWorkControlBinding(
@@ -484,6 +490,7 @@ export class LifecycleRuntime {
             fxPath: this.options.fxPath,
             // Provider arguments are built after the durable Manifest claim.
             fxArgs: null,
+            fxStateRoot: source.launch_request.state_root,
             workControl: binding,
           })
         },
@@ -605,6 +612,7 @@ export class LifecycleRuntime {
               cwd: request.workspace.directory,
               fxPath: this.options.fxPath,
               fxArgs: null,
+              fxStateRoot: request.source.launch_request.state_root,
               workControl: binding,
             })
           }),

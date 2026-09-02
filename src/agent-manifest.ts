@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto"
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
-import { dirname } from "node:path"
+import { dirname, isAbsolute, normalize } from "node:path"
 import type { AgentAttention, AgentState } from "./agent-registry.ts"
 import type { FxWorkControlBinding } from "./fx-work-control.ts"
 import { resolveFmxHome } from "./home.ts"
@@ -45,6 +45,8 @@ export type ManifestEntry = AgentIdentity & {
   fxPath: string
   /** `null` when unknown: an adopted Agent's argv comes from a display string the Companion truncates. */
   fxArgs: string[] | null
+  /** Exact Fx profile root for a lifecycle-managed launch; legacy and ordinary Agents use HOME. */
+  fxStateRoot: string | null
   createdAt: number
   fxSessionId: string | null
   /** Null until fx has reported a state, including for older Manifests. */
@@ -134,7 +136,7 @@ export function parseManifest(content: string, homeId: string): Manifest {
 
 function readEntry(raw: unknown): ManifestEntry | null {
   if (!isRecord(raw)) return null
-  const { agentId, displayId, cwd, fxPath, fxArgs, createdAt, fxSessionId, phase } = raw
+  const { agentId, displayId, cwd, fxPath, fxArgs, fxStateRoot, createdAt, fxSessionId, phase } = raw
   if (!isAgentId(agentId)) return null
   const identity = identityFor(agentId)
   if (raw.paneId !== identity.paneId || raw.zmxName !== identity.zmxName) return null
@@ -142,6 +144,7 @@ function readEntry(raw: unknown): ManifestEntry | null {
   if (typeof cwd !== "string" || !cwd.startsWith("/")) return null
   if (typeof fxPath !== "string" || fxPath.length === 0) return null
   if (fxArgs !== null && (!Array.isArray(fxArgs) || !fxArgs.every((arg) => typeof arg === "string"))) return null
+  if (fxStateRoot !== undefined && fxStateRoot !== null && !isValidFxStateRoot(fxStateRoot)) return null
   if (typeof createdAt !== "number" || !Number.isFinite(createdAt)) return null
   if (fxSessionId !== null && fxSessionId !== undefined && typeof fxSessionId !== "string") return null
   if (phase !== "creating" && phase !== "running") return null
@@ -151,6 +154,7 @@ function readEntry(raw: unknown): ManifestEntry | null {
     cwd,
     fxPath,
     fxArgs: fxArgs === null ? null : [...(fxArgs as string[])],
+    fxStateRoot: typeof fxStateRoot === "string" ? fxStateRoot : null,
     createdAt,
     fxSessionId: typeof fxSessionId === "string" && fxSessionId.length > 0 ? fxSessionId : null,
     agentStatus: readAgentStatus(raw.agentStatus),
@@ -211,6 +215,8 @@ export type CreateParams = {
   fxPath: string
   /** `null` when unknown: an adopted Agent's argv comes from a display string the Companion truncates. */
   fxArgs: string[] | null
+  /** Exact Fx profile root for a lifecycle-managed launch; omit or null for HOME. */
+  fxStateRoot?: string | null
   createdAt: number
   identity?: AgentIdentity
   workControl?: FxWorkControlBinding | null
@@ -288,6 +294,9 @@ export class AgentManifest {
   }
 
   private claimIn(manifest: Manifest, params: CreateParams): ManifestEntry {
+    if (params.fxStateRoot !== undefined && params.fxStateRoot !== null && !isValidFxStateRoot(params.fxStateRoot)) {
+      throw new Error("invalid Fx state root for manifest claim")
+    }
     const identity = params.identity ?? mintIdentity()
     if (manifest.agents.some((entry) => entry.agentId === identity.agentId)) {
       throw new Error(`agent already in manifest: ${identity.agentId}`)
@@ -298,6 +307,7 @@ export class AgentManifest {
       cwd: params.cwd,
       fxPath: params.fxPath,
       fxArgs: params.fxArgs && [...params.fxArgs],
+      fxStateRoot: params.fxStateRoot ?? null,
       createdAt: params.createdAt,
       fxSessionId: null,
       agentStatus: null,
@@ -328,6 +338,7 @@ export class AgentManifest {
         cwd: params.cwd,
         fxPath: params.fxPath,
         fxArgs: params.fxArgs && [...params.fxArgs],
+        fxStateRoot: params.fxStateRoot ?? null,
         createdAt: params.createdAt,
         fxSessionId: params.fxSessionId ?? null,
         agentStatus: null,
@@ -427,7 +438,20 @@ function sameClaim(
     entry.cwd === params.cwd &&
     entry.fxPath === params.fxPath &&
     sameNullableStrings(entry.fxArgs, params.fxArgs) &&
+    entry.fxStateRoot === (params.fxStateRoot ?? null) &&
     sameWorkControl(entry.workControl, params.workControl ?? null)
+}
+
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u
+
+function isValidFxStateRoot(value: unknown): value is string {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    Buffer.byteLength(value, "utf8") <= 4096 &&
+    isAbsolute(value) &&
+    value !== "/" &&
+    normalize(value) === value &&
+    !CONTROL_CHARACTERS.test(value)
 }
 
 function sameNullableStrings(left: readonly string[] | null, right: readonly string[] | null): boolean {
