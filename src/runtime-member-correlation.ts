@@ -1,7 +1,7 @@
 import * as z from "zod/v4"
 import type {
   EnsureLifecycleLedger,
-  EnsureLifecycleRecord,
+  LifecycleLedgerRecord,
 } from "./ensure-lifecycle-ledger.ts"
 
 const SAFE_TOKEN = /^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,127})$/u
@@ -25,11 +25,11 @@ export interface RuntimeMemberCorrelationSource {
   snapshot(): Promise<readonly RuntimeMemberCorrelationEntry[]>
 }
 
-type EnsureLifecycleLedgerReader = Pick<EnsureLifecycleLedger, "list">
+type EnsureLifecycleLedgerReader = Pick<EnsureLifecycleLedger, "listAll">
 
 /**
  * Role-neutral adapter from the durable ensure authority to Runtime members.
- * `list` holds one ledger lock and returns one consistent record set; no
+ * `listAll` holds one ledger lock across ordinary and managed records; no
  * per-Agent read can mix revisions from different ledger instants.
  */
 export class EnsureLifecycleRuntimeMemberCorrelationSource
@@ -38,7 +38,7 @@ export class EnsureLifecycleRuntimeMemberCorrelationSource
   constructor(private readonly ledger: EnsureLifecycleLedgerReader) {}
 
   async snapshot(): Promise<readonly RuntimeMemberCorrelationEntry[]> {
-    const records = await this.ledger.list()
+    const records = await this.ledger.listAll()
     return records.flatMap(correlationEntryFor)
   }
 }
@@ -88,7 +88,7 @@ export function indexRuntimeMemberCorrelations(
 }
 
 function correlationEntryFor(
-  record: EnsureLifecycleRecord,
+  record: LifecycleLedgerRecord,
 ): RuntimeMemberCorrelationEntry[] {
   if (record.effects.manifest.status !== "claimed") return []
   if (record.effects.manifest.agent_id !== record.request.agent_id) {

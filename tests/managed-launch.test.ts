@@ -9,8 +9,11 @@ import {
 import { encodeCanonicalJson, type JsonValue } from "../src/contract-codec.ts"
 import {
   deriveFxAdmissionDecisionDigest,
+  deriveFxFinalReceiptDigest,
   EnsureLifecycleLedger,
   type FxAdmissionDecision,
+  type FxFinalReceipt,
+  type FxFinalReceiptAcknowledgement,
 } from "../src/ensure-lifecycle-ledger.ts"
 import {
   deriveFrozenLaunchDigest,
@@ -138,6 +141,115 @@ describe("managed-launch durable transaction", () => {
     const acknowledged = await again.acknowledgeManagedOutcome(acknowledgement)
     expect(acknowledged.outcome.acknowledgement).toEqual(acknowledgement)
     expect(await again.acknowledgeManagedOutcome(acknowledgement)).toEqual(acknowledged)
+  })
+
+  test("replays a durable managed Fx final acknowledgement after external failure", async () => {
+    const root = await temporaryDirectory()
+    const ledgerRoot = join(root, "ensure")
+    const ledger = await EnsureLifecycleLedger.open(ledgerRoot)
+    const request = await managedRequest("final-replay")
+    const conversationId = request.fx_conversation.resume_conversation_id!
+    await placeManagedAtCompanionStarted(ledger, request)
+    await ledger.retainManagedFxAdmissionDecision(
+      request.ensure_id,
+      managedAdmittedDecisionFor(request, conversationId, "1"),
+    )
+    await ledger.advanceManaged(request.ensure_id, {
+      kind: "fx_started",
+      conversation_id: conversationId,
+    })
+
+    const receiptWithoutDigest = {
+      schema_id: "fx.launch-admission-final",
+      schema_version: 1,
+      message_type: "final_receipt",
+      receipt_id: `managed-final-receipt-${request.ensure_id}`,
+      receipt_digest: "",
+      launch_id: request.launch_id,
+      launch_digest: request.launch_digest,
+      admission_key: request.source.admission_key,
+      conversation_id: conversationId,
+      outcome: { kind: "exited", code: 0 },
+      observed_at: "2026-09-02T12:00:00.000Z",
+      retained_until_acknowledged: true,
+    } as FxFinalReceipt
+    const receipt = {
+      ...receiptWithoutDigest,
+      receipt_digest: deriveFxFinalReceiptDigest(receiptWithoutDigest),
+    }
+    const acknowledgement = {
+      schema_id: "fx.launch-admission-final",
+      schema_version: 1,
+      message_type: "final_receipt_acknowledgement",
+      acknowledgement_id: `managed-final-ack-${request.ensure_id}`,
+      admission_key: receipt.admission_key,
+      launch_id: receipt.launch_id,
+      launch_digest: receipt.launch_digest,
+      conversation_id: receipt.conversation_id,
+      receipt_id: receipt.receipt_id,
+      receipt_digest: receipt.receipt_digest,
+    } as FxFinalReceiptAcknowledgement
+
+    const retained = await ledger.retainManagedFxFinalReceipt(request.ensure_id, receipt)
+    expect(await ledger.retainManagedFxFinalReceipt(request.ensure_id, receipt)).toEqual(retained)
+    const authorityCalls: FxFinalReceiptAcknowledgement[] = []
+    await expect(ledger.acknowledgeManagedFxFinalReceipt(
+      request.ensure_id,
+      acknowledgement,
+      {
+        acknowledge: async (_binding, value) => {
+          authorityCalls.push(structuredClone(value))
+          throw new Error("Fx acknowledgement unavailable")
+        },
+      },
+    )).rejects.toThrow("Fx acknowledgement unavailable")
+
+    const reopened = await EnsureLifecycleLedger.open(ledgerRoot)
+    expect(await reopened.getManaged(request.ensure_id)).toMatchObject({
+      fx_final: {
+        receipt,
+        acknowledgement,
+        acknowledgement_applied: false,
+      },
+    })
+    const applied = await reopened.acknowledgeManagedFxFinalReceipt(
+      request.ensure_id,
+      acknowledgement,
+      {
+        acknowledge: async (_binding, value) => {
+          authorityCalls.push(structuredClone(value))
+        },
+      },
+    )
+    expect(applied.fx_final.acknowledgement_applied).toBe(true)
+    expect(await reopened.acknowledgeManagedFxFinalReceipt(
+      request.ensure_id,
+      acknowledgement,
+      { acknowledge: async () => { throw new Error("must not replay an applied acknowledgement") } },
+    )).toEqual(applied)
+    expect(authorityCalls).toEqual([acknowledgement, acknowledgement])
+
+    const cancelledRoot = await temporaryDirectory()
+    const cancelledLedger = await EnsureLifecycleLedger.open(join(cancelledRoot, "ensure"))
+    const cancelledRequest = await managedRequest("final-cancelled")
+    await placeManagedAtCompanionStarted(cancelledLedger, cancelledRequest)
+    await cancelledLedger.retainManagedFxAdmissionDecision(
+      cancelledRequest.ensure_id,
+      managedCancelledDecisionFor(cancelledRequest),
+    )
+    const impossible = {
+      ...receipt,
+      receipt_id: `managed-final-receipt-${cancelledRequest.ensure_id}`,
+      launch_id: cancelledRequest.launch_id,
+      launch_digest: cancelledRequest.launch_digest,
+      admission_key: cancelledRequest.source.admission_key,
+      conversation_id: cancelledRequest.fx_conversation.resume_conversation_id!,
+    }
+    impossible.receipt_digest = deriveFxFinalReceiptDigest(impossible)
+    await expect(cancelledLedger.retainManagedFxFinalReceipt(
+      cancelledRequest.ensure_id,
+      impossible,
+    )).rejects.toMatchObject({ code: "receipt_conflict" })
   })
 
   test("uses no Worktree or retirement effect and replays an outcome only until acknowledgement", async () => {

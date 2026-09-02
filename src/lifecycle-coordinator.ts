@@ -386,6 +386,13 @@ export class LifecycleCoordinator {
     await this.options.ports.retirement?.afterFinalReceipt(ensureId, receipt)
   }
 
+  /** Managed launches share Fx finality but have no Worktree retirement slice. */
+  async retainManagedFinalReceipt(ensureId: string, receipt: FxFinalReceipt): Promise<void> {
+    await this.withAdmissionGate(ensureId, async () => {
+      await this.options.ledger.retainManagedFxFinalReceipt(ensureId, receipt)
+    })
+  }
+
   /** Durable acknowledgement replay for Fx's final-receipt authority. */
   acknowledgeFinalReceipt(
     ensureId: string,
@@ -393,6 +400,18 @@ export class LifecycleCoordinator {
     authority: FxFinalReceiptAuthority,
   ): Promise<EnsureLifecycleRecord> {
     return this.options.ledger.acknowledgeFxFinalReceipt(ensureId, acknowledgement, authority)
+  }
+
+  acknowledgeManagedFinalReceipt(
+    ensureId: string,
+    acknowledgement: FxFinalReceiptAcknowledgement,
+    authority: FxFinalReceiptAuthority,
+  ): Promise<ManagedLaunchRecord> {
+    return this.options.ledger.acknowledgeManagedFxFinalReceipt(
+      ensureId,
+      acknowledgement,
+      authority,
+    )
   }
 
   /**

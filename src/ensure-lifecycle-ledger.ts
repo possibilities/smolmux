@@ -185,7 +185,7 @@ export type ManagedLaunchRecord = {
   fx_final: FxFinalReceiptTransaction
 }
 
-type LifecycleLedgerRecord = EnsureLifecycleRecord | ManagedLaunchRecord
+export type LifecycleLedgerRecord = EnsureLifecycleRecord | ManagedLaunchRecord
 
 export type EnsureLifecycleTransition =
   | {
@@ -530,6 +530,17 @@ export class EnsureLifecycleLedger {
       (await this.readIndex(guard)).managedRecords.map(copyManagedRecord)))
   }
 
+  /** One lock-held snapshot across both frozen and managed lifecycle schemas. */
+  listAll(): Promise<LifecycleLedgerRecord[]> {
+    return this.serial(() => this.withLock(async (guard) => {
+      const index = await this.readIndex(guard)
+      return [
+        ...index.records.map(copyRecord),
+        ...index.managedRecords.map(copyManagedRecord),
+      ]
+    }))
+  }
+
   advance(ensureId: string, transition: EnsureLifecycleTransition): Promise<EnsureLifecycleRecord> {
     return this.serial(() => this.withLock(async (guard) => {
       const index = await this.readIndex(guard)
@@ -844,13 +855,42 @@ export class EnsureLifecycleLedger {
         return copyRecord(record)
       }
       assertFxFinalReceiptCorrelation(record, receipt, "receipt_conflict")
-      assertReceiptIdAvailable(index.records, receipt.receipt_id)
+      assertAnyReceiptIdAvailable(index, receipt.receipt_id)
       const next = copyRecord(record)
       next.revision++
       next.fx_final.receipt = receipt
       validateRecord(next, recordPathFor(this.root, ensureId))
       await this.writeRecord(next, guard, requireRecordIdentity(index, ensureId))
       return copyRecord(next)
+    }))
+  }
+
+  /** Retain the same Fx-owned terminal receipt for a managed launch record. */
+  retainManagedFxFinalReceipt(
+    ensureId: string,
+    receiptInput: FxFinalReceipt,
+  ): Promise<ManagedLaunchRecord> {
+    return this.serial(() => this.withLock(async (guard) => {
+      const receipt = parseFxFinalReceipt(receiptInput)
+      const index = await this.readIndex(guard)
+      const record = requireManagedRecord(index, ensureId)
+      if (record.fx_final.receipt !== null) {
+        if (!sameCanonical(record.fx_final.receipt, receipt)) {
+          throw ledgerError(
+            "receipt_conflict",
+            `managed launch ${ensureId} already retains a different Fx final receipt`,
+          )
+        }
+        return copyManagedRecord(record)
+      }
+      assertManagedFxFinalReceiptCorrelation(record, receipt, "receipt_conflict")
+      assertAnyReceiptIdAvailable(index, receipt.receipt_id)
+      const next = copyManagedRecord(record)
+      next.revision++
+      next.fx_final.receipt = receipt
+      validateManagedRecord(next, recordPathFor(this.root, ensureId))
+      await this.writeLedgerRecord(next, guard, requireRecordIdentity(index, ensureId))
+      return copyManagedRecord(next)
     }))
   }
 
@@ -877,16 +917,45 @@ export class EnsureLifecycleLedger {
         return copyRecord(record)
       }
       assertFxFinalAcknowledgementCorrelation(record, acknowledgement, "invalid_acknowledgement")
-      assertAcknowledgementIdAvailable(
-        index.records,
-        acknowledgement.acknowledgement_id,
-      )
+      assertAnyAcknowledgementIdAvailable(index, acknowledgement.acknowledgement_id)
       const next = copyRecord(record)
       next.revision++
       next.fx_final.acknowledgement = acknowledgement
       validateRecord(next, recordPathFor(this.root, ensureId))
       await this.writeRecord(next, guard, requireRecordIdentity(index, ensureId))
       return copyRecord(next)
+    }))
+  }
+
+  prepareManagedFxFinalReceiptAcknowledgement(
+    ensureId: string,
+    acknowledgementInput: FxFinalReceiptAcknowledgement,
+  ): Promise<ManagedLaunchRecord> {
+    return this.serial(() => this.withLock(async (guard) => {
+      const acknowledgement = parseFxFinalReceiptAcknowledgement(acknowledgementInput)
+      const index = await this.readIndex(guard)
+      const record = requireManagedRecord(index, ensureId)
+      if (record.fx_final.acknowledgement !== null) {
+        if (!sameCanonical(record.fx_final.acknowledgement, acknowledgement)) {
+          throw ledgerError(
+            "acknowledgement_conflict",
+            `managed launch ${ensureId} already retains another Fx final acknowledgement`,
+          )
+        }
+        return copyManagedRecord(record)
+      }
+      assertManagedFxFinalAcknowledgementCorrelation(
+        record,
+        acknowledgement,
+        "invalid_acknowledgement",
+      )
+      assertAnyAcknowledgementIdAvailable(index, acknowledgement.acknowledgement_id)
+      const next = copyManagedRecord(record)
+      next.revision++
+      next.fx_final.acknowledgement = acknowledgement
+      validateManagedRecord(next, recordPathFor(this.root, ensureId))
+      await this.writeLedgerRecord(next, guard, requireRecordIdentity(index, ensureId))
+      return copyManagedRecord(next)
     }))
   }
 
@@ -917,6 +986,32 @@ export class EnsureLifecycleLedger {
     }))
   }
 
+  private markManagedFxFinalReceiptAcknowledgementApplied(
+    ensureId: string,
+    acknowledgementId: string,
+  ): Promise<ManagedLaunchRecord> {
+    return this.serial(() => this.withLock(async (guard) => {
+      if (!isSafeToken(acknowledgementId)) {
+        throw ledgerError("invalid_acknowledgement", "Fx final acknowledgement id is invalid")
+      }
+      const index = await this.readIndex(guard)
+      const record = requireManagedRecord(index, ensureId)
+      if (record.fx_final.acknowledgement?.acknowledgement_id !== acknowledgementId) {
+        throw ledgerError(
+          "invalid_acknowledgement",
+          `managed launch ${ensureId} has no matching durable Fx final acknowledgement intent`,
+        )
+      }
+      if (record.fx_final.acknowledgement_applied) return copyManagedRecord(record)
+      const next = copyManagedRecord(record)
+      next.revision++
+      next.fx_final.acknowledgement_applied = true
+      validateManagedRecord(next, recordPathFor(this.root, ensureId))
+      await this.writeLedgerRecord(next, guard, requireRecordIdentity(index, ensureId))
+      return copyManagedRecord(next)
+    }))
+  }
+
   /** Execute the durable intent -> exact external ack -> local completion transaction. */
   async acknowledgeFxFinalReceipt(
     ensureId: string,
@@ -938,6 +1033,32 @@ export class EnsureLifecycleLedger {
     }
     await authority.acknowledge(structuredClone(binding), structuredClone(acknowledgement))
     return this.markFxFinalReceiptAcknowledgementApplied(
+      ensureId,
+      acknowledgement.acknowledgement_id,
+    )
+  }
+
+  /** Execute the same durable acknowledgement transaction for a managed launch. */
+  async acknowledgeManagedFxFinalReceipt(
+    ensureId: string,
+    acknowledgementInput: FxFinalReceiptAcknowledgement,
+    authority: FxFinalReceiptAuthority,
+  ): Promise<ManagedLaunchRecord> {
+    const prepared = await this.prepareManagedFxFinalReceiptAcknowledgement(
+      ensureId,
+      acknowledgementInput,
+    )
+    if (prepared.fx_final.acknowledgement_applied) return prepared
+    const binding = prepared.fx_final.binding
+    const acknowledgement = prepared.fx_final.acknowledgement
+    if (binding === null || acknowledgement === null) {
+      throw ledgerError(
+        "corrupt_record",
+        `managed launch ${ensureId} lost its Fx final acknowledgement authority`,
+      )
+    }
+    await authority.acknowledge(structuredClone(binding), structuredClone(acknowledgement))
+    return this.markManagedFxFinalReceiptAcknowledgementApplied(
       ensureId,
       acknowledgement.acknowledgement_id,
     )
@@ -1459,6 +1580,9 @@ function assertManagedFxFinalReceiptCorrelation(
   receipt: FxFinalReceipt,
   code: EnsureLifecycleLedgerErrorCode,
 ): void {
+  if (record.fx_admission_decision?.decision.kind === "cancelled_before_start") {
+    throw ledgerError(code, "managed launch cannot retain Fx finality after cancellation won")
+  }
   const binding = record.fx_final.binding
   if (
     MANAGED_STAGES.indexOf(record.stage) < MANAGED_STAGES.indexOf("companion_started") ||

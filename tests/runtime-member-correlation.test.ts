@@ -75,9 +75,9 @@ test("takes one ledger list and excludes claims that have not reached the Manife
   await ledger.claim(request)
   let listCalls = 0
   const source = new EnsureLifecycleRuntimeMemberCorrelationSource({
-    list: async () => {
+    listAll: async () => {
       listCalls++
-      return ledger.list()
+      return ledger.listAll()
     },
   })
 

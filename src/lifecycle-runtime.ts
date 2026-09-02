@@ -18,6 +18,7 @@ import {
   type FxFinalReceipt,
   type FxFinalReceiptAcknowledgement,
   type FxFinalReceiptAuthorityBinding,
+  type LifecycleLedgerRecord,
   type ManagedLaunchRecord,
 } from "./ensure-lifecycle-ledger.ts"
 import { buildEnsureLifecycleReceipt } from "./ensure-lifecycle-receipt.ts"
@@ -412,11 +413,13 @@ export class LifecycleRuntime {
     const record = await this.ensureForAgent(removal.entry.agentId)
     if (record === null) return
     if (record.stage === "manifest_claimed") {
-      const retired = await this.retirementLedger.get(record.request.ensure_id)
-      if (await this.isProvenNeverStarted(retired, record)) {
-        // Startup reconciliation owns final residue/Manifest removal. This
-        // hook may run before the Multiplexer has projected the row.
-        return
+      if (!isManagedLifecycleRecord(record)) {
+        const retired = await this.retirementLedger.get(record.request.ensure_id)
+        if (await this.isProvenNeverStarted(retired, record)) {
+          // Startup reconciliation owns final residue/Manifest removal. This
+          // hook may run before the Multiplexer has projected the row.
+          return
+        }
       }
       if (!(removal.reason === "exited" && removal.session?.exit)) return "preserve"
     }
@@ -425,7 +428,7 @@ export class LifecycleRuntime {
     } else {
       await this.finalize(record, null)
     }
-    await this.awaitRetirement(record.request.ensure_id)
+    if (!isManagedLifecycleRecord(record)) await this.awaitRetirement(record.request.ensure_id)
   }
 
   /** Live Multiplexer barrier. The supplied Exit is the definitive Companion observation. */
@@ -445,7 +448,7 @@ export class LifecycleRuntime {
           : { kind: "signalled", signal: exit.signal },
       })
     }
-    await this.awaitRetirement(record.request.ensure_id)
+    if (!isManagedLifecycleRecord(record)) await this.awaitRetirement(record.request.ensure_id)
   }
 
   private coordinatorPorts(): LifecycleCoordinatorPorts {
@@ -1255,37 +1258,49 @@ export class LifecycleRuntime {
   }
 
   private async finalize(
-    record: EnsureLifecycleRecord,
+    record: LifecycleLedgerRecord,
     evidence: { observedAt: string; outcome: FxLaunchProviderFinalOutcome } | null,
   ): Promise<void> {
-    const current = await this.requireEnsure(record.request.ensure_id)
+    const current = isManagedLifecycleRecord(record)
+      ? await this.requireManagedEnsure(record.request.ensure_id)
+      : await this.requireEnsure(record.request.ensure_id)
     if (current.fx_final.acknowledgement_applied) return
+    const correlation = isManagedLifecycleRecord(current)
+      ? managedCorrelationFor(current)
+      : correlationFor(current)
     let authority: FxLaunchProviderFinalAuthority
     if (evidence !== null) {
       authority = await this.provider.recordFinal(
-        correlationFor(current),
+        correlation,
         evidence.observedAt,
         evidence.outcome,
       )
     } else {
-      authority = await this.provider.inspect(correlationFor(current))
+      authority = await this.provider.inspect(correlation)
     }
     if (authority.finalReceipt !== null) {
-      await this.coordinator.retainFinalReceipt(
-        current.request.ensure_id,
-        exactFinalReceipt(authority.finalReceipt),
-      )
-      const retained = await this.requireEnsure(current.request.ensure_id)
+      const receipt = exactFinalReceipt(authority.finalReceipt)
+      if (isManagedLifecycleRecord(current)) {
+        await this.coordinator.retainManagedFinalReceipt(current.request.ensure_id, receipt)
+        await this.acknowledgeManagedFinal(current.request.ensure_id, receipt)
+      } else {
+        await this.coordinator.retainFinalReceipt(current.request.ensure_id, receipt)
+      }
+      const retained = isManagedLifecycleRecord(current)
+        ? await this.requireManagedEnsure(current.request.ensure_id)
+        : await this.requireEnsure(current.request.ensure_id)
       if (!retained.fx_final.acknowledgement_applied) {
         throw new Error(`Fx final receipt for ensure ${current.request.ensure_id} is not acknowledged`)
       }
       return
     }
     if (authority.decision?.decision.kind === "cancelled_before_start") {
-      await this.ensureLedger.retainFxAdmissionDecision(
-        current.request.ensure_id,
-        exactAdmissionDecision(authority.decision),
-      )
+      const decision = exactAdmissionDecision(authority.decision)
+      if (isManagedLifecycleRecord(current)) {
+        await this.ensureLedger.retainManagedFxAdmissionDecision(current.request.ensure_id, decision)
+      } else {
+        await this.ensureLedger.retainFxAdmissionDecision(current.request.ensure_id, decision)
+      }
       return
     }
     throw new Error(
@@ -1296,6 +1311,18 @@ export class LifecycleRuntime {
   private async acknowledgeFinal(ensureId: string, receipt: FxFinalReceipt): Promise<void> {
     const acknowledgement = finalAcknowledgement(receipt)
     await this.coordinator.acknowledgeFinalReceipt(ensureId, acknowledgement, {
+      acknowledge: async (binding, value) => {
+        const result = await this.provider.acknowledgeFinal(binding.state_root, value)
+        if (result.finalAcknowledgementId !== value.acknowledgement_id) {
+          throw new Error("Fx launch provider did not apply the exact final acknowledgement")
+        }
+      },
+    })
+  }
+
+  private async acknowledgeManagedFinal(ensureId: string, receipt: FxFinalReceipt): Promise<void> {
+    const acknowledgement = finalAcknowledgement(receipt)
+    await this.coordinator.acknowledgeManagedFinalReceipt(ensureId, acknowledgement, {
       acknowledge: async (binding, value) => {
         const result = await this.provider.acknowledgeFinal(binding.state_root, value)
         if (result.finalAcknowledgementId !== value.acknowledgement_id) {
@@ -1341,8 +1368,8 @@ export class LifecycleRuntime {
     }
   }
 
-  private async ensureForAgent(agentId: string): Promise<EnsureLifecycleRecord | null> {
-    const matches = (await this.ensureLedger.list()).filter(
+  private async ensureForAgent(agentId: string): Promise<LifecycleLedgerRecord | null> {
+    const matches = (await this.ensureLedger.listAll()).filter(
       (record) => record.request.agent_id === agentId,
     )
     if (matches.length > 1) throw new Error(`Agent ${agentId} has multiple lifecycle ensures`)
@@ -1352,6 +1379,12 @@ export class LifecycleRuntime {
   private async requireEnsure(ensureId: string): Promise<EnsureLifecycleRecord> {
     const record = await this.ensureLedger.get(ensureId)
     if (record === null) throw new Error(`unknown lifecycle ensure: ${ensureId}`)
+    return record
+  }
+
+  private async requireManagedEnsure(ensureId: string): Promise<ManagedLaunchRecord> {
+    const record = await this.ensureLedger.getManaged(ensureId)
+    if (record === null) throw new Error(`unknown managed lifecycle ensure: ${ensureId}`)
     return record
   }
 
@@ -1452,6 +1485,12 @@ function correlationFor(record: EnsureLifecycleRecord) {
     launchDigest: record.request.launch_digest,
     launchId: record.request.launch_id,
   }
+}
+
+function isManagedLifecycleRecord(
+  record: LifecycleLedgerRecord,
+): record is ManagedLaunchRecord {
+  return record.schema_version === 4
 }
 
 function managedCorrelationFor(record: ManagedLaunchRecord) {

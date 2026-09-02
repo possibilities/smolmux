@@ -380,6 +380,70 @@ describe("production lifecycle Runtime composition", () => {
     }
   })
 
+  test("includes managed Agents in the exact Runtime member correlation snapshot", async () => {
+    const request = await managedRuntimeFixture("managed-correlation")
+    const fixture = await lifecycleFixture("ensure-a", "launch-a", "managed-correlation-carrier")
+    const harness = await runtimeHarness(fixture, { preloadedManagedRequest: request })
+    try {
+      expect(await harness.runtime.correlationSource.snapshot()).toEqual([{
+        agent_id: request.agent_id,
+        correlation: {
+          ensure_id: request.ensure_id,
+          ensure_digest: request.ensure_digest,
+          launch_id: request.launch_id,
+          launch_digest: request.launch_digest,
+        },
+      }])
+    } finally {
+      await harness.runtime.close()
+    }
+  })
+
+  test("retains and acknowledges exact Fx finality for a definitively ended managed Agent", async () => {
+    const request = await managedRuntimeFixture("managed-final")
+    const fixture = await lifecycleFixture("ensure-a", "launch-a", "managed-final-carrier")
+    const harness = await runtimeHarness(fixture, {
+      preloadedManagedRequest: request,
+      pendingAdmissionRetryDelayMsForTests: 0,
+    })
+    try {
+      await harness.runtime.recover()
+      await waitFor(async () => {
+        const ledger = await EnsureLifecycleLedger.open(harness.runtime.roots.ensure)
+        return (await ledger.getManaged(request.ensure_id))?.stage === "fx_started"
+      })
+
+      const entry = harness.manifest.get(request.agent_id)
+      if (entry === null) throw new Error("managed Agent lost its durable Manifest claim")
+      await harness.runtime.beforeDefinitiveAgentForget(entry, { code: 0, signal: 0 })
+
+      expect(harness.provider.recordedFinal).toEqual({ kind: "exited", code: 0 })
+      expect(harness.provider.acknowledged).toHaveLength(1)
+      const durable = await EnsureLifecycleLedger.open(harness.runtime.roots.ensure)
+      expect(await durable.getManaged(request.ensure_id)).toMatchObject({
+        fx_final: {
+          receipt: {
+            launch_id: request.launch_id,
+            launch_digest: request.launch_digest,
+            admission_key: request.source.admission_key,
+            conversation_id: request.fx_conversation.resume_conversation_id,
+            outcome: { kind: "exited", code: 0 },
+          },
+          acknowledgement: {
+            launch_id: request.launch_id,
+            launch_digest: request.launch_digest,
+            admission_key: request.source.admission_key,
+            conversation_id: request.fx_conversation.resume_conversation_id,
+          },
+          acknowledgement_applied: true,
+        },
+      })
+      expect(await durable.list()).toEqual([])
+    } finally {
+      await harness.runtime.close()
+    }
+  })
+
   test("derives never-started proof only from the provider's exact negative winner", async () => {
     const fixture = await lifecycleFixture("ensure-b", "launch-b", "cancel")
     const harness = await runtimeHarness(fixture, { cancellation: true })
@@ -688,6 +752,7 @@ async function runtimeHarness(
     choices.cancellation ?? false,
     choices.providerEnvironment,
     choices.neverAdmit ?? false,
+    choices.preloadedManagedRequest?.fx_conversation.resume_conversation_id ?? "conversation-runtime",
   )
   const retirement = choices.retirementGate === undefined
     ? undefined
@@ -830,6 +895,11 @@ class FakeProvider {
   readonly acknowledged: string[] = []
   recordedFinal: unknown = null
   private final: FxFinalReceipt | null = null
+  private lastCorrelation: {
+    admissionKey: string
+    launchDigest: string
+    launchId: string
+  } | null = null
 
   constructor(
     private readonly fixture: Awaited<ReturnType<typeof lifecycleFixture>>,
@@ -838,6 +908,7 @@ class FakeProvider {
     private readonly providerEnvironment: Record<string, string> = {},
     /** Fx never decides: every inspect() stays pending regardless of admission. */
     private readonly neverAdmit: boolean = false,
+    private readonly finalConversationId: string = "conversation-runtime",
   ) {}
 
   async prepare() {
@@ -880,11 +951,16 @@ class FakeProvider {
     }
   }
 
-  async inspect() {
+  async inspect(correlation?: {
+    admissionKey: string
+    launchDigest: string
+    launchId: string
+  }) {
     this.operations.push("inspect")
+    if (correlation !== undefined) this.lastCorrelation = structuredClone(correlation)
     return this.authority(
       this.final,
-      !this.neverAdmit && this.workControl.admitted ? this.admittedDecision() : null,
+      !this.neverAdmit && this.workControl.admitted ? this.admittedDecision(correlation) : null,
     )
   }
 
@@ -894,8 +970,13 @@ class FakeProvider {
     return this.authority(null, this.cancelledDecision(request.request_id))
   }
 
-  async recordFinal(_correlation: unknown, observedAt: string, outcome: any) {
+  async recordFinal(
+    correlation: { admissionKey: string; launchDigest: string; launchId: string },
+    observedAt: string,
+    outcome: any,
+  ) {
     this.operations.push("record_final")
+    this.lastCorrelation = structuredClone(correlation)
     this.recordedFinal = structuredClone(outcome)
     const partial = {
       schema_id: "fx.launch-admission-final",
@@ -903,23 +984,23 @@ class FakeProvider {
       message_type: "final_receipt",
       receipt_id: "runtime-final-receipt",
       receipt_digest: "",
-      launch_id: this.fixture.ensure.launch_id,
-      launch_digest: this.fixture.ensure.launch_digest,
-      admission_key: this.fixture.source.admission_key,
-      conversation_id: "conversation-runtime",
+      launch_id: correlation.launchId,
+      launch_digest: correlation.launchDigest,
+      admission_key: correlation.admissionKey,
+      conversation_id: this.finalConversationId,
       outcome,
       observed_at: observedAt,
       retained_until_acknowledged: true,
     } as FxFinalReceipt
     this.final = { ...partial, receipt_digest: deriveFxFinalReceiptDigest(partial) }
-    return this.authority(this.final, this.admittedDecision())
+    return this.authority(this.final, this.admittedDecision(correlation))
   }
 
   async acknowledgeFinal(_stateRoot: string, acknowledgement: { acknowledgement_id: string }) {
     this.operations.push("acknowledge_final")
     this.acknowledged.push(acknowledgement.acknowledgement_id)
     return {
-      ...this.authority(this.final, this.admittedDecision()),
+      ...this.authority(this.final, this.admittedDecision(this.lastCorrelation ?? undefined)),
       finalAcknowledgementId: acknowledgement.acknowledgement_id,
     }
   }
@@ -933,16 +1014,20 @@ class FakeProvider {
     }
   }
 
-  private admittedDecision(): FxAdmissionDecision {
+  private admittedDecision(correlation?: {
+    admissionKey: string
+    launchDigest: string
+    launchId: string
+  }): FxAdmissionDecision {
     const partial = {
       schema_id: "fx.launch-admission-final",
       schema_version: 1,
       message_type: "admission_decision",
       receipt_id: "runtime-admitted-decision",
       receipt_digest: "",
-      launch_id: this.fixture.ensure.launch_id,
-      launch_digest: this.fixture.ensure.launch_digest,
-      admission_key: this.fixture.source.admission_key,
+      launch_id: correlation?.launchId ?? this.fixture.ensure.launch_id,
+      launch_digest: correlation?.launchDigest ?? this.fixture.ensure.launch_digest,
+      admission_key: correlation?.admissionKey ?? this.fixture.source.admission_key,
       decision: { kind: "admitted", turn_id: "41", disposition: "queued" },
     } as FxAdmissionDecision
     return { ...partial, receipt_digest: deriveFxAdmissionDecisionDigest(partial) }
