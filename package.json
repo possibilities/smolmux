@@ -1,6 +1,6 @@
 {
   "name": "smolmux",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "packageManager": "bun@1.4.0",
   "description": "A terminal multiplexer driven over a socket",
   "type": "module",
@@ -8,6 +8,7 @@
     "smolmux": "./src/index.ts"
   },
   "scripts": {
+    "generate:events-schema": "bun src/event-schema.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "test:pty": "SMOLMUX_RUN_PTY_TESTS=1 bun test tests/instance.e2e.test.ts",

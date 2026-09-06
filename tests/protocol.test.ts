@@ -20,7 +20,7 @@ describe("the contract", () => {
   test("is exactly the methods the design names, and no more", () => {
     expect([...METHOD_NAMES].sort()).toEqual([
       "client.copy",
-      "events.subscribe",
+      "event.subscribe",
       "instance.status",
       "instance.stop",
       "layout.apply",
@@ -30,6 +30,7 @@ describe("the contract", () => {
       "session.input",
       "session.kill",
       "session.list",
+      "state.get",
     ])
   })
 
@@ -48,7 +49,9 @@ describe("the contract", () => {
       "session.changed",
       "session.exited",
       "session.state",
+      "sessions.changed",
       "stage.changed",
+      "state.invalidated",
       "theme.changed",
     ])
     expect(ERROR_CODES).toContain("companion_error")
@@ -85,11 +88,11 @@ describe("frames", () => {
       ok: false,
       error: { code: "not_found", message: "no Session named x" },
     })
-    expect(JSON.parse(encodeFrame(eventFrame("theme.changed", { theme: "dark" })))).toEqual({
+    expect(JSON.parse(encodeFrame(eventFrame("theme.changed", { theme: "dark", instanceId: "test", generation: 1, sequence: 1 })))).toEqual({
       v: 1,
       type: "event",
       event: "theme.changed",
-      data: { theme: "dark" },
+      data: { theme: "dark", instanceId: "test", generation: 1, sequence: 1 },
     })
   })
 

@@ -8,7 +8,13 @@ one of them names a method this file does not.
 
 ## Connecting
 
-`smolmux start` prints the socket path, and `smolmux status` reports it again. It is
+`smolmux event-socket --name NAME` verifies and prints the exact live API socket,
+followed by a newline, without starting a Runtime or touching the Companion.
+`--name` defaults to `default`; together with the configuration directory it
+selects exactly one Instance, even when others are running. Repeated selectors
+are refused rather than guessed. Discovery checks the directory and socket
+ownership and modes, refuses symlinks, and never creates or unlinks a path.
+`smolmux start` also prints the socket path, and `smolmux status` reports it. It is
 `/tmp/smolmux-<uid>/<instance id>.api`, mode 0600, inside a directory created
 0700 and refused when it is not yours.
 
@@ -18,14 +24,15 @@ Frames are one JSON object per line:
 {"v":1,"type":"request","id":"1","method":"session.create","params":{"name":"tray","argv":["tray"],"cwd":"/Users/you/code/agentwork"}}
 {"v":1,"type":"response","id":"1","ok":true,"result":{"name":"tray","pid":8412,"…":"…"}}
 {"v":1,"type":"response","id":"2","ok":false,"error":{"code":"not_found","message":"no Session named docs"}}
-{"v":1,"type":"event","event":"session.exited","data":{"name":"tray","code":0,"signal":0,"reason":"natural"}}
+{"v":1,"type":"event","event":"session.exited","data":{"instanceId":"lifetime-id","generation":1,"sequence":13,"name":"tray","code":0,"signal":null,"reason":"natural"}}
 ```
 
 A connection is long-lived and may carry any number of requests. `id` is the
-caller's; a response carries it back. Requests may complete out of order; correlate replies by `id`. Await a reply
+caller's nonempty string (at most 128 characters); a response carries it back.
+Envelopes and params reject unknown fields and versions. Requests may complete out of order; correlate replies by `id`. Await a reply
 before sending an operation that depends on it. Each request is at most 1 MiB
 in UTF-8 bytes. A subscriber with more than 4 MiB of queued output is disconnected;
-reconnect, subscribe, and read `instance.status` to obtain current state. After `events.subscribe`, that same connection also receives event
+reconnect, subscribe, and read `state.get` to replace current observation. After `event.subscribe`, that same connection also receives event
 frames until it hangs up.
 
 ## The model
@@ -63,10 +70,70 @@ and a caller who believes they are gone.
 Success therefore means every process is gone. It does not retry on your
 behalf; retry the call.
 
-### `events.subscribe`
+### `event.subscribe`
 
-Marks this connection a subscriber; it then receives every event frame until
-it hangs up. Takes no params.
+Takes `{events?: string[]}` and returns `{subscribed:true,events:string[]}`.
+Omitted or null params mean `{}`. Omitted `events` means `["*"]`. Supply 1–32
+entries, each 1–128 characters, matching `^(?:\*|[a-z][a-z0-9._:/-]*\*?)$`.
+Duplicates are removed. Names match exactly; a single trailing `*` matches a
+literal prefix; `*` matches all. No regex/glob interpretation or case folding.
+Unknown well-formed names are valid.
+
+Each call replaces this connection's filters. The successful response is the
+replacement boundary: old queued events may precede it, subsequent events use
+the new filters. Invalid requests preserve the previous filters. Disconnect
+unsubscribes. Further control/read requests remain available on the connection.
+
+### `state.get`
+
+Takes `{}` (omitted or null params also mean `{}`). Returns:
+
+```ts
+{
+  instanceId: string; // random Runtime lifetime ID, changes on restart
+  generation: 1;      // a Runtime is not replaced within its own lifetime
+  sequence: number;   // publication watermark, starting at zero
+  availability: "ready" | "incomplete" | "unavailable";
+  reason: string | null;
+  state: InstanceStatus | null;
+}
+```
+
+`state` has the complete `instance.status` shape: version, pid, name, stable
+`instance_id`, socket, Stage, theme, Sessions and Layout. The stable Instance ID
+used for adoption/socket naming is different from the random feed `instanceId`.
+There is no terminal content in this projection; read `session.capture` for it.
+
+Snapshots and publication sequence allocation run synchronously with projection
+mutation, and snapshots detach all mutable references before returning. Every
+published event advances the sequence, even if no subscriber matches. Gaps are
+normal under filters; sequence is neither a timestamp nor a durable replay cursor.
+Snapshots always read the whole projection independently of filters.
+
+Adoption with unidentified Companion Sessions is `incomplete`. Failed/pending
+adoption is `unavailable`; any retained rows are explicitly partial. A known
+Session whose transport is unreachable remains a row with `state:unreachable`,
+which does not by itself make the roster incomplete. Neither a missing row nor
+an unavailable transport proves successful completion. A stopping Instance is
+unavailable. If serialized projection data exceeds 2 MiB, `state` is null and
+availability is unavailable with a reason; it is never silently truncated.
+An event payload above 2 MiB is replaced by `state.invalidated` at its sequence.
+Complete observers subscribe to `*`; selective state observers must include
+`state.*` and resnapshot on invalidation.
+
+Establish the reader before subscribing, await its acknowledgment, buffer events,
+then request `state.get`. Replace local state at its watermark and apply only
+newer current-state events from the same lifetime/generation. Deliver transient
+`session.changed` and `session.exited` independently of snapshot watermarks;
+these notifications are live-only and are never replayed. Exit notifications
+carry status, while `sessions.changed` owns roster removal. A lifetime or
+generation change invalidates old state. On disconnect mark observation
+unavailable, reconnect, resubscribe, and take a new snapshot.
+
+The bundled `ApiClient.observe(onState)` performs this sequence and calls
+`onState(null)` on disconnect. Its `onEvent` callback separately receives transient
+notifications. Its snapshot buffer is capped at 4096 events or 4 MiB; overflow
+fails the connection so a reconnect can obtain a fresh projection.
 
 ### `session.create`
 
@@ -281,14 +348,23 @@ much as a paste. Write-only: there is no read, because terminals refuse OSC
 
 ## Events
 
-| Event | When | Data |
+Every `data` object includes `instanceId`, `generation`, and `sequence`.
+The checked-in [events.schema.json](../events.schema.json) publishes draft
+2020-12 request/response shapes and a typed event catalog. `$defs.events.anyOf`
+references definitions named for each event value. Generate it from the runtime
+contract with `bun run generate:events-schema`; tests check drift and emitted frames.
+
+| Event | Delivery | Domain data and meaning |
 | --- | --- | --- |
-| `session.exited` | a process ended, or adoption found it gone | `name`, `code`, `signal`, `reason` |
-| `session.changed` | output or a title reached a screen, debounced ~100 ms | `name`, `title` |
-| `layout.changed` | the fitted Layout changed | `layout`, `cause` (`apply`, `drag`, `resize`) |
-| `stage.changed` | the stage took a new size | `cols`, `rows` |
-| `theme.changed` | the resolved theme changed | `theme` |
-| `instance.stopping` | `instance.stop` was accepted | — |
+| `sessions.changed` | current state | `sessions`, `availability`, `reason`; replace roster including sizes, titles, visibility and reachability |
+| `session.state` | current state | `name`, `state`; replace one row's transport reachability |
+| `session.exited` | transient | `name`, `code`, `signal`, `reason`; process ended or adoption found it gone |
+| `session.changed` | transient | `name`, `title`; output/title reached a screen, debounced ~100 ms; trigger Capture |
+| `layout.changed` | current state | `layout`, `sessions`, `cause` (`apply`, `drag`, `resize`); replace Layout and fitted Session rows |
+| `stage.changed` | current state | `cols`, `rows`; replace Stage size |
+| `theme.changed` | current state | `theme`; replace resolved theme |
+| `instance.stopping` | current state | observation becomes unavailable because stop was accepted |
+| `state.invalidated` | current state | `reason`; invalidate observation and request another snapshot |
 
 `code` and `signal` on `session.exited` are null when the Companion could not
 read them; `reason` always says something.
@@ -308,7 +384,7 @@ smolmux keeps reaching for it, `session.exited` is what says it ended.
 ## Errors
 
 `invalid_request`, `unknown_method`, `invalid_params`, `not_found`,
-`conflict`, `companion_error`, `internal`. Each carries a message meant to be
+`conflict`, `companion_error`, `internal_error`. Each carries a message meant to be
 read.
 
 ## Deliberately absent
@@ -325,7 +401,8 @@ read.
 - **No clipboard read.** `client.copy` writes; terminals refuse OSC 52 reads,
   and a program that wants what the human copied reads it where the human is.
 
-Connections carrying more than 128 concurrent requests are dropped. The bundled
+At most 128 API connections are held. Excess connections, and connections
+carrying more than 128 concurrent requests, are dropped. The bundled
 client permits 128 pending requests and 4 MiB of queued output; its default
 request deadline is 60 seconds (`timeoutMs` can override it). A deadline or
 connection loss leaves a mutating request's outcome unknown: read current state

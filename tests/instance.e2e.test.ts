@@ -92,9 +92,11 @@ test.skipIf(!ENABLED)(
 
       const events: EventFrame[] = []
       client = await ApiClient.connect(socketPath, { onEvent: (event) => events.push(event) })
-      await client.request("events.subscribe")
+      await client.request("event.subscribe")
 
-      const status = await client.request("instance.status")
+      const snapshot = await client.request("state.get")
+      expect(snapshot.availability).toBe("ready")
+      const status = snapshot.state!
       expect(status).toMatchObject({ name: "default", sessions: [], theme: "dark" })
       expect(status.layout.root).toEqual({ text: "no sessions" })
 
@@ -290,7 +292,9 @@ test.skipIf(!ENABLED)(
         env: { SMOLMUX_TEST_BANNER: "still here" },
         labels: { role: "worker" },
       })
-      const before = await client.request("instance.status")
+      await client.request("event.subscribe")
+      const beforeSnapshot = await client.request("state.get")
+      const before = beforeSnapshot.state!
       client.close()
       client = null
 
@@ -302,7 +306,12 @@ test.skipIf(!ENABLED)(
       const restarted = await smolmux(["start"], env)
       expect(restarted.code).toBe(0)
       client = await ApiClient.connect(socketPath)
-      const status = await client.request("instance.status")
+      await client.request("event.subscribe")
+      const afterSnapshot = await client.request("state.get")
+      expect(afterSnapshot.instanceId).not.toBe(beforeSnapshot.instanceId)
+      expect(afterSnapshot.generation).toBe(1)
+      const status = afterSnapshot.state!
+      expect(status.instance_id).toBe(before.instance_id)
       expect(status.pid).not.toBe(before.pid)
       const survivor = status.sessions.find((session: SessionView) => session.name === "survivor")
       expect(survivor).toMatchObject({ name: "survivor", state: "live", labels: { role: "worker" } })

@@ -7,7 +7,7 @@ import { z } from "zod"
  *
  * Wire: newline-delimited JSON over one duplex Unix socket. A client sends
  * `request` frames and receives `response` frames with the same id; after
- * `events.subscribe` it also receives `event` frames until it hangs up.
+ * `event.subscribe` it also receives `event` frames until it hangs up.
  */
 export const PROTOCOL_VERSION = 1
 
@@ -59,7 +59,7 @@ export type LayoutNode =
  */
 export const MAX_LAYOUT_DEPTH = 32
 
-export const layoutNodeSchema: z.ZodType<LayoutNode> = z.lazy(() =>
+export const layoutNodeSchema: z.ZodType<LayoutNode, LayoutNode> = z.lazy(() =>
   z.union([
     z.object({ row: z.array(layoutNodeSchema).min(1), ...sizedLeaf }).strict(),
     z.object({ column: z.array(layoutNodeSchema).min(1), ...sizedLeaf }).strict(),
@@ -249,9 +249,35 @@ export const instanceStatusSchema = z.object({
 })
 export type InstanceStatus = z.infer<typeof instanceStatusSchema>
 
+export const eventContextSchema = z.object({
+  instanceId: z.string().min(1).describe("Random Runtime lifetime ID; distinct from the stable instance_id"),
+  generation: z.literal(1).describe("No Runtime replacement within one lifetime"),
+  sequence: z.int().min(0).describe("Publication watermark; not a replay cursor or timestamp"),
+}).strict()
+export type EventContext = z.infer<typeof eventContextSchema>
+export const MAX_PROJECTION_BYTES = 2 * 1024 * 1024
+export const availabilitySchema = z.enum(["ready", "incomplete", "unavailable"])
+export const stateSnapshotSchema = eventContextSchema.extend({
+  availability: availabilitySchema,
+  reason: z.string().nullable(),
+  state: instanceStatusSchema.nullable().describe("Complete current projection, or null when it exceeds 2 MiB; no terminal content"),
+}).strict()
+export type StateSnapshot = z.infer<typeof stateSnapshotSchema>
+
+export const eventFiltersSchema = z.array(z.string().min(1).max(128).regex(/^(?:\*|[a-z][a-z0-9._:/-]*\*?)$/u)).min(1).max(32)
+export const eventSubscriptionSchema = z.object({ events: eventFiltersSchema.default(["*"]) }).strict()
+export function matchesEvent(filters: readonly string[], event: string): boolean {
+  return filters.some((filter) => filter.endsWith("*") ? event.startsWith(filter.slice(0, -1)) : event === filter)
+}
+
 const empty = z.object({}).strict()
 
 export const METHODS = {
+  "state.get": {
+    description: "Atomic complete current projection and publication watermark, independent of filters; explicit incomplete/unavailable adoption or size limits. Subscribe first. Transient notifications are not superseded by this watermark.",
+    params: empty,
+    result: stateSnapshotSchema,
+  },
   "instance.status": {
     description: "The Runtime as it stands: version, stage size, theme, every Session, and the Layout.",
     params: empty,
@@ -263,10 +289,10 @@ export const METHODS = {
     params: empty,
     result: empty,
   },
-  "events.subscribe": {
-    description: "Receive event frames on this connection until it hangs up.",
-    params: empty,
-    result: empty,
+  "event.subscribe": {
+    description: "Replace this connection's event filters; acknowledgment is the replacement boundary. Default *, exact names or literal trailing-* prefixes.",
+    params: eventSubscriptionSchema,
+    result: z.object({ subscribed: z.literal(true), events: eventFiltersSchema }).strict(),
   },
   "session.create": {
     description:
@@ -357,12 +383,20 @@ export const METHODS = {
 
 export type Method = keyof typeof METHODS
 export const METHOD_NAMES = Object.keys(METHODS) as Method[]
-export type Params<M extends Method> = z.infer<(typeof METHODS)[M]["params"]>
+export type Params<M extends Method> = z.input<(typeof METHODS)[M]["params"]>
 export type Result<M extends Method> = z.infer<(typeof METHODS)[M]["result"]>
 
 export const EVENTS = {
+  "sessions.changed": {
+    description: "Current state: replace the Session roster, including sizes, titles, visibility and reachability. Removal does not imply successful completion.",
+    data: z.object({ sessions: z.array(sessionViewSchema), availability: availabilitySchema, reason: z.string().nullable() }),
+  },
+  "state.invalidated": {
+    description: "Current state: the event exceeded the 2 MiB projection limit; invalidate observation and request state.get. No partial projection is complete.",
+    data: z.object({ reason: z.string() }),
+  },
   "session.exited": {
-    description: "A Session's process ended, or adoption found it gone. code and signal are null when the Companion could not read them.",
+    description: "Transient: a Session's process ended, or adoption found it gone. code and signal are null when the Companion could not read them.",
     data: z.object({
       name: sessionName,
       code: z.int().or(NONE),
@@ -372,27 +406,27 @@ export const EVENTS = {
   },
   "session.state": {
     description:
-      "A Session's transport was lost or came back. Input to an unreachable Session is refused; its screen stays readable as the one it last had.",
+      "Current state: a Session's transport was lost or came back. Input to an unreachable Session is refused; its screen stays readable as the one it last had.",
     data: z.object({ name: sessionName, state: z.enum(["live", "unreachable"]) }),
   },
   "session.changed": {
-    description: "Output or a title change reached a Session's screen; debounced. Capture it to read it.",
+    description: "Transient: output or a title change reached a Session's screen; debounced. Capture it to read it.",
     data: z.object({ name: sessionName, title: z.string() }),
   },
   "layout.changed": {
-    description: "The fitted Layout changed: an apply, a divider drag, or a stage resize.",
-    data: z.object({ layout: layoutViewSchema, cause: z.enum(["apply", "drag", "resize"]) }),
+    description: "Current state: the fitted Layout changed: an apply, a divider drag, or a stage resize.",
+    data: z.object({ layout: layoutViewSchema, sessions: z.array(sessionViewSchema), cause: z.enum(["apply", "drag", "resize"]) }),
   },
   "stage.changed": {
-    description: "The stage took a new size from its sizing owner.",
+    description: "Current state: the stage took a new size from its sizing owner.",
     data: stageSchema,
   },
   "theme.changed": {
-    description: "The resolved fxnk theme changed.",
+    description: "Current state: the resolved fxnk theme changed.",
     data: z.object({ theme }),
   },
   "instance.stopping": {
-    description: "instance.stop was accepted; the socket closes after this.",
+    description: "Current state: instance.stop was accepted; the socket closes after this.",
     data: empty,
   },
 } as const
@@ -407,7 +441,7 @@ export const ERROR_CODES = [
   "not_found",
   "conflict",
   "companion_error",
-  "internal",
+  "internal_error",
 ] as const
 export type ErrorCode = (typeof ERROR_CODES)[number]
 
@@ -424,21 +458,28 @@ export class ApiFailure extends Error {
 export const requestSchema = z.object({
   v: z.literal(PROTOCOL_VERSION),
   type: z.literal("request"),
-  id: z.string().min(1),
+  id: z.string().min(1).max(128),
   method: z.string().min(1),
-  params: z.record(z.string(), z.unknown()).optional(),
-})
+  params: z.record(z.string(), z.unknown()).nullish(),
+}).strict()
 export type RequestFrame = z.infer<typeof requestSchema>
 
-export type ResponseFrame =
-  | { v: typeof PROTOCOL_VERSION; type: "response"; id: string | null; ok: true; result: unknown }
-  | { v: typeof PROTOCOL_VERSION; type: "response"; id: string | null; ok: false; error: { code: ErrorCode; message: string } }
+export const responseFrameSchema = z.union([
+  z.object({ v: z.literal(PROTOCOL_VERSION), type: z.literal("response"), id: z.string().min(1).max(128), ok: z.literal(true), result: z.unknown() }).strict(),
+  z.object({ v: z.literal(PROTOCOL_VERSION), type: z.literal("response"), id: z.string().nullable(), ok: z.literal(false), error: z.object({ code: z.enum(ERROR_CODES), message: z.string() }).strict() }).strict(),
+])
+export type ResponseFrame = z.infer<typeof responseFrameSchema>
 
 export type EventFrame = {
-  v: typeof PROTOCOL_VERSION
-  type: "event"
-  event: EventName
-  data: unknown
+  [E in EventName]: { v: typeof PROTOCOL_VERSION; type: "event"; event: E; data: EventData<E> & EventContext }
+}[EventName]
+export const eventFrameSchema = z.union(Object.entries(EVENTS).map(([name, definition]) =>
+  z.object({ v: z.literal(PROTOCOL_VERSION), type: z.literal("event"), event: z.literal(name),
+    data: definition.data.extend(eventContextSchema.shape).strict(),
+  }).strict().describe(definition.description).meta({ id: name }),
+)).meta({ id: "events" })
+export function isTransientEvent(event: EventName): boolean {
+  return event === "session.changed" || event === "session.exited"
 }
 
 export type Frame = RequestFrame | ResponseFrame | EventFrame
@@ -447,7 +488,7 @@ export function encodeFrame(frame: Frame): string {
   return `${JSON.stringify(frame)}\n`
 }
 
-export function successFrame(id: string | null, result: unknown): ResponseFrame {
+export function successFrame(id: string, result: unknown): ResponseFrame {
   return { v: PROTOCOL_VERSION, type: "response", id, ok: true, result }
 }
 
@@ -455,8 +496,8 @@ export function failureFrame(id: string | null, code: ErrorCode, message: string
   return { v: PROTOCOL_VERSION, type: "response", id, ok: false, error: { code, message } }
 }
 
-export function eventFrame<E extends EventName>(event: E, data: EventData<E>): EventFrame {
-  return { v: PROTOCOL_VERSION, type: "event", event, data }
+export function eventFrame<E extends EventName>(event: E, data: EventData<E> & EventContext): EventFrame {
+  return { v: PROTOCOL_VERSION, type: "event", event, data } as EventFrame
 }
 
 export function isMethod(name: string): name is Method {
@@ -470,13 +511,13 @@ export function contractDocument(): Record<string, unknown> {
     const method = METHODS[name]
     methods[name] = {
       description: method.description,
-      params: z.toJSONSchema(method.params),
+      params: z.toJSONSchema(method.params, { io: "input" }),
       result: z.toJSONSchema(method.result),
     }
   }
   const events: Record<string, unknown> = {}
   for (const [name, event] of Object.entries(EVENTS)) {
-    events[name] = { description: event.description, data: z.toJSONSchema(event.data) }
+    events[name] = { description: event.description, data: z.toJSONSchema(event.data.extend(eventContextSchema.shape).strict()) }
   }
   return {
     protocol: PROTOCOL_VERSION,

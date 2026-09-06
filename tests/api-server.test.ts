@@ -65,7 +65,7 @@ test("an unexpected handler failure is internal, and its message survives", asyn
   })
   const client = await connect(server)
   await expect(client.call("session.list")).rejects.toMatchObject({
-    code: "internal",
+    code: "internal_error",
     message: "the Companion is not answering",
   })
 })
@@ -76,12 +76,12 @@ test("events reach only the connections that subscribed", async () => {
   const quiet: unknown[] = []
   const listener = await connect(server, (event) => heard.push(event))
   await connect(server, (event) => quiet.push(event))
-  await listener.call("events.subscribe")
+  await listener.call("event.subscribe")
   expect(server.subscribers).toBe(1)
 
-  server.broadcast(eventFrame("theme.changed", { theme: "light" }))
+  server.broadcast(eventFrame("theme.changed", { theme: "light", instanceId: "test", generation: 1, sequence: 1 }))
   await Bun.sleep(30)
-  expect(heard).toEqual([{ v: 1, type: "event", event: "theme.changed", data: { theme: "light" } }])
+  expect(heard).toEqual([{ v: 1, type: "event", event: "theme.changed", data: { theme: "light", instanceId: "test", generation: 1, sequence: 1 } }])
   expect(quiet).toEqual([])
 })
 
@@ -154,14 +154,14 @@ test("a subscriber that stops reading is dropped rather than growing the heap", 
     },
   })
   try {
-    socket.write(`${JSON.stringify({ v: 1, type: "request", id: "1", method: "events.subscribe" })}\n`)
+    socket.write(`${JSON.stringify({ v: 1, type: "request", id: "1", method: "event.subscribe" })}\n`)
     await Bun.sleep(30)
     expect(server.subscribers).toBe(1)
 
     // Nothing reads from here on; the kernel buffer fills and the queue grows.
     const big = "x".repeat(40_000)
     for (let index = 0; index < 4_000 && server.subscribers > 0; index += 1) {
-      server.broadcast(eventFrame("session.changed", { name: "tray", title: big }))
+      server.broadcast(eventFrame("session.changed", { name: "tray", title: big, instanceId: "test", generation: 1, sequence: 1 }))
     }
     // It is dropped, not held forever.
     expect(server.subscribers).toBe(0)

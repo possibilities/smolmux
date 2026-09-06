@@ -1,0 +1,3474 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/requests"
+    },
+    {
+      "$ref": "#/$defs/responses"
+    },
+    {
+      "$ref": "#/$defs/events"
+    }
+  ],
+  "$defs": {
+    "requests": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "method": {
+              "type": "string",
+              "const": "state.get"
+            },
+            "params": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "method"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "method": {
+              "type": "string",
+              "const": "instance.status"
+            },
+            "params": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "method"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "method": {
+              "type": "string",
+              "const": "instance.stop"
+            },
+            "params": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "method"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "method": {
+              "type": "string",
+              "const": "event.subscribe"
+            },
+            "params": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "events": {
+                      "default": [
+                        "*"
+                      ],
+                      "minItems": 1,
+                      "maxItems": 32,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^(?:\\*|[a-z][a-z0-9._:/-]*\\*?)$"
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "method"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "method": {
+              "type": "string",
+              "const": "session.create"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                  "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                },
+                "argv": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": "The executable first"
+                },
+                "cwd": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "An absolute directory"
+                },
+                "env": {
+                  "description": "Applied over smolmux's own environment with its private variables removed",
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "cols": {
+                  "description": "The PTY size until a Pane sizes it; default 80",
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 4096
+                },
+                "rows": {
+                  "description": "default 24",
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 4096
+                },
+                "labels": {
+                  "description": "Caller labels kept on the Companion session; owner, instance, and session are smolmux's",
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_.-]+$"
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_.-]+$"
+                  }
+                }
+              },
+              "required": [
+                "name",
+                "argv",
+                "cwd"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "method": {
+              "type": "string",
+              "const": "session.kill"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                  "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "method": {
+              "type": "string",
+              "const": "session.list"
+            },
+            "params": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "method"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "method": {
+              "type": "string",
+              "const": "session.capture"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                  "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                },
+                "scrollback": {
+                  "description": "Lines of history above the screen; at most 10000, default none",
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "method": {
+              "type": "string",
+              "const": "session.input"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                  "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                },
+                "events": {
+                  "minItems": 1,
+                  "maxItems": 256,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 16,
+                            "description": "One named key (enter, escape, tab, backspace, delete, insert, home, end, pageup, pagedown, up, down, left, right, space, f1-f24) or a single character"
+                          },
+                          "action": {
+                            "description": "default press",
+                            "type": "string",
+                            "enum": [
+                              "press",
+                              "repeat",
+                              "release"
+                            ]
+                          },
+                          "ctrl": {
+                            "type": "boolean"
+                          },
+                          "alt": {
+                            "type": "boolean"
+                          },
+                          "shift": {
+                            "type": "boolean"
+                          },
+                          "super": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "key"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "text": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096,
+                            "description": "Delivered as one key press per character, the way typing looks to a program"
+                          }
+                        },
+                        "required": [
+                          "text"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "paste": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 65536,
+                            "description": "Delivered whole, bracketed when the Session turned bracketed paste on, so a program can tell it from typing"
+                          }
+                        },
+                        "required": [
+                          "paste"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mouse": {
+                            "type": "object",
+                            "properties": {
+                              "action": {
+                                "type": "string",
+                                "enum": [
+                                  "down",
+                                  "up",
+                                  "move",
+                                  "drag",
+                                  "scroll"
+                                ]
+                              },
+                              "button": {
+                                "description": "default left; ignored by move and scroll",
+                                "type": "string",
+                                "enum": [
+                                  "left",
+                                  "middle",
+                                  "right"
+                                ]
+                              },
+                              "x": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991,
+                                "description": "Cell from the Session's own left edge, not the stage's"
+                              },
+                              "y": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991,
+                                "description": "Cell from the Session's own top edge"
+                              },
+                              "scroll": {
+                                "description": "Required by scroll, and meaningless to every other action",
+                                "type": "object",
+                                "properties": {
+                                  "direction": {
+                                    "type": "string",
+                                    "enum": [
+                                      "up",
+                                      "down",
+                                      "left",
+                                      "right"
+                                    ]
+                                  },
+                                  "delta": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 100
+                                  }
+                                },
+                                "required": [
+                                  "direction",
+                                  "delta"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "ctrl": {
+                                "type": "boolean"
+                              },
+                              "alt": {
+                                "type": "boolean"
+                              },
+                              "shift": {
+                                "type": "boolean"
+                              },
+                              "super": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "action",
+                              "x",
+                              "y"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "mouse"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "name",
+                "events"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "method": {
+              "type": "string",
+              "const": "layout.apply"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "root": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    {
+                      "type": "null",
+                      "description": "null when there is none"
+                    }
+                  ]
+                },
+                "focus": {
+                  "description": "Omitted keeps the focus if that Session is still shown",
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                      "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                    },
+                    {
+                      "type": "null",
+                      "description": "null when there is none"
+                    }
+                  ]
+                },
+                "revision": {
+                  "description": "The revision this tree was built from. The apply is refused as a conflict when the Layout has moved since, so a human's divider drag is never silently clobbered by a stale read-modify-write.",
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "root"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "method": {
+              "type": "string",
+              "const": "layout.get"
+            },
+            "params": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "method"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "method": {
+              "type": "string",
+              "const": "client.copy"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 65536,
+                  "description": "What the clipboard should hold; as much as a paste"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "row": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema0"
+              }
+            },
+            "size": {
+              "description": "Fixed columns in a row, rows in a column; omitted takes the remainder",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "min": {
+              "description": "The smallest length along this node's parent's axis; default 1",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "row"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "column": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema0"
+              }
+            },
+            "size": {
+              "description": "Fixed columns in a row, rows in a column; omitted takes the remainder",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "min": {
+              "description": "The smallest length along this node's parent's axis; default 1",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "column"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "session": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+              "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+            },
+            "size": {
+              "description": "Fixed columns in a row, rows in a column; omitted takes the remainder",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "min": {
+              "description": "The smallest length along this node's parent's axis; default 1",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "session"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "size": {
+              "description": "Fixed columns in a row, rows in a column; omitted takes the remainder",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "min": {
+              "description": "The smallest length along this node's parent's axis; default 1",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "responses": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "properties": {
+                "instanceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Random Runtime lifetime ID; distinct from the stable instance_id"
+                },
+                "generation": {
+                  "type": "number",
+                  "const": 1,
+                  "description": "No Runtime replacement within one lifetime"
+                },
+                "sequence": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "Publication watermark; not a replay cursor or timestamp"
+                },
+                "availability": {
+                  "type": "string",
+                  "enum": [
+                    "ready",
+                    "incomplete",
+                    "unavailable"
+                  ]
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "state": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "string"
+                        },
+                        "pid": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "The Instance name; `default` for the unnamed one"
+                        },
+                        "instance_id": {
+                          "type": "string"
+                        },
+                        "socket": {
+                          "type": "string",
+                          "description": "This API socket's path"
+                        },
+                        "stage": {
+                          "type": "object",
+                          "properties": {
+                            "cols": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 9007199254740991
+                            },
+                            "rows": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "cols",
+                            "rows"
+                          ]
+                        },
+                        "theme": {
+                          "type": "string",
+                          "enum": [
+                            "dark",
+                            "light"
+                          ]
+                        },
+                        "sessions": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                                "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                              },
+                              "pid": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991
+                                  },
+                                  {
+                                    "type": "null",
+                                    "description": "null when there is none"
+                                  }
+                                ],
+                                "description": "The child's pid; null while unknown"
+                              },
+                              "cwd": {
+                                "type": "string"
+                              },
+                              "argv": {
+                                "anyOf": [
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  {
+                                    "type": "null",
+                                    "description": "null when there is none"
+                                  }
+                                ],
+                                "description": "The argv it was created with; null when adopted from a previous Runtime"
+                              },
+                              "created_at": {
+                                "type": "number",
+                                "description": "ms since the epoch"
+                              },
+                              "title": {
+                                "type": "string",
+                                "description": "The last OSC 0/2 title the Session set; empty until it sets one"
+                              },
+                              "cols": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 9007199254740991
+                              },
+                              "rows": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 9007199254740991
+                              },
+                              "shown": {
+                                "type": "boolean",
+                                "description": "Whether a Pane of the current Layout shows it"
+                              },
+                              "state": {
+                                "type": "string",
+                                "enum": [
+                                  "live",
+                                  "unreachable"
+                                ],
+                                "description": "unreachable: its transport dropped and could not be reopened yet"
+                              },
+                              "labels": {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z0-9_.-]+$"
+                                },
+                                "additionalProperties": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "pid",
+                              "cwd",
+                              "argv",
+                              "created_at",
+                              "title",
+                              "cols",
+                              "rows",
+                              "shown",
+                              "state",
+                              "labels"
+                            ]
+                          }
+                        },
+                        "layout": {
+                          "type": "object",
+                          "properties": {
+                            "revision": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991,
+                              "description": "Increments whenever the tree changes, by an apply or a divider drag; pass it back to layout.apply to refuse a stale write"
+                            },
+                            "root": {
+                              "anyOf": [
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                },
+                                {
+                                  "type": "null",
+                                  "description": "null when there is none"
+                                }
+                              ],
+                              "description": "The applied tree with sizes as they stand after drags"
+                            },
+                            "focus": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                                  "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                                },
+                                {
+                                  "type": "null",
+                                  "description": "null when there is none"
+                                }
+                              ],
+                              "description": "The Session the keyboard goes to"
+                            },
+                            "stage": {
+                              "type": "object",
+                              "properties": {
+                                "cols": {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 9007199254740991
+                                },
+                                "rows": {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "cols",
+                                "rows"
+                              ]
+                            },
+                            "panes": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "session": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                                        "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                                      },
+                                      {
+                                        "type": "null",
+                                        "description": "null when there is none"
+                                      }
+                                    ]
+                                  },
+                                  "text": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null",
+                                        "description": "null when there is none"
+                                      }
+                                    ]
+                                  },
+                                  "x": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "y": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cols": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "rows": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "focused": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "session",
+                                  "text",
+                                  "x",
+                                  "y",
+                                  "cols",
+                                  "rows",
+                                  "focused"
+                                ]
+                              },
+                              "description": "Every Pane as fitted, in tree order; a squeezed-out Pane has 0 cols or rows"
+                            }
+                          },
+                          "required": [
+                            "revision",
+                            "root",
+                            "focus",
+                            "stage",
+                            "panes"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "version",
+                        "pid",
+                        "name",
+                        "instance_id",
+                        "socket",
+                        "stage",
+                        "theme",
+                        "sessions",
+                        "layout"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Complete current projection, or null when it exceeds 2 MiB; no terminal content"
+                }
+              },
+              "required": [
+                "instanceId",
+                "generation",
+                "sequence",
+                "availability",
+                "reason",
+                "state"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "ok",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string"
+                },
+                "pid": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "name": {
+                  "type": "string",
+                  "description": "The Instance name; `default` for the unnamed one"
+                },
+                "instance_id": {
+                  "type": "string"
+                },
+                "socket": {
+                  "type": "string",
+                  "description": "This API socket's path"
+                },
+                "stage": {
+                  "type": "object",
+                  "properties": {
+                    "cols": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "rows": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "cols",
+                    "rows"
+                  ]
+                },
+                "theme": {
+                  "type": "string",
+                  "enum": [
+                    "dark",
+                    "light"
+                  ]
+                },
+                "sessions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                        "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                      },
+                      "pid": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null",
+                            "description": "null when there is none"
+                          }
+                        ],
+                        "description": "The child's pid; null while unknown"
+                      },
+                      "cwd": {
+                        "type": "string"
+                      },
+                      "argv": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "null",
+                            "description": "null when there is none"
+                          }
+                        ],
+                        "description": "The argv it was created with; null when adopted from a previous Runtime"
+                      },
+                      "created_at": {
+                        "type": "number",
+                        "description": "ms since the epoch"
+                      },
+                      "title": {
+                        "type": "string",
+                        "description": "The last OSC 0/2 title the Session set; empty until it sets one"
+                      },
+                      "cols": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "rows": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "shown": {
+                        "type": "boolean",
+                        "description": "Whether a Pane of the current Layout shows it"
+                      },
+                      "state": {
+                        "type": "string",
+                        "enum": [
+                          "live",
+                          "unreachable"
+                        ],
+                        "description": "unreachable: its transport dropped and could not be reopened yet"
+                      },
+                      "labels": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.-]+$"
+                        },
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "pid",
+                      "cwd",
+                      "argv",
+                      "created_at",
+                      "title",
+                      "cols",
+                      "rows",
+                      "shown",
+                      "state",
+                      "labels"
+                    ]
+                  }
+                },
+                "layout": {
+                  "type": "object",
+                  "properties": {
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "Increments whenever the tree changes, by an apply or a divider drag; pass it back to layout.apply to refuse a stale write"
+                    },
+                    "root": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/__schema0"
+                        },
+                        {
+                          "type": "null",
+                          "description": "null when there is none"
+                        }
+                      ],
+                      "description": "The applied tree with sizes as they stand after drags"
+                    },
+                    "focus": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                          "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                        },
+                        {
+                          "type": "null",
+                          "description": "null when there is none"
+                        }
+                      ],
+                      "description": "The Session the keyboard goes to"
+                    },
+                    "stage": {
+                      "type": "object",
+                      "properties": {
+                        "cols": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "rows": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "cols",
+                        "rows"
+                      ]
+                    },
+                    "panes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "session": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                                "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                              },
+                              {
+                                "type": "null",
+                                "description": "null when there is none"
+                              }
+                            ]
+                          },
+                          "text": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null",
+                                "description": "null when there is none"
+                              }
+                            ]
+                          },
+                          "x": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "y": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "cols": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "rows": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "focused": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "session",
+                          "text",
+                          "x",
+                          "y",
+                          "cols",
+                          "rows",
+                          "focused"
+                        ]
+                      },
+                      "description": "Every Pane as fitted, in tree order; a squeezed-out Pane has 0 cols or rows"
+                    }
+                  },
+                  "required": [
+                    "revision",
+                    "root",
+                    "focus",
+                    "stage",
+                    "panes"
+                  ]
+                }
+              },
+              "required": [
+                "version",
+                "pid",
+                "name",
+                "instance_id",
+                "socket",
+                "stage",
+                "theme",
+                "sessions",
+                "layout"
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "ok",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "ok",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "properties": {
+                "subscribed": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "events": {
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^(?:\\*|[a-z][a-z0-9._:/-]*\\*?)$"
+                  }
+                }
+              },
+              "required": [
+                "subscribed",
+                "events"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "ok",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                  "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                },
+                "pid": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null",
+                      "description": "null when there is none"
+                    }
+                  ],
+                  "description": "The child's pid; null while unknown"
+                },
+                "cwd": {
+                  "type": "string"
+                },
+                "argv": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    {
+                      "type": "null",
+                      "description": "null when there is none"
+                    }
+                  ],
+                  "description": "The argv it was created with; null when adopted from a previous Runtime"
+                },
+                "created_at": {
+                  "type": "number",
+                  "description": "ms since the epoch"
+                },
+                "title": {
+                  "type": "string",
+                  "description": "The last OSC 0/2 title the Session set; empty until it sets one"
+                },
+                "cols": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "rows": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "shown": {
+                  "type": "boolean",
+                  "description": "Whether a Pane of the current Layout shows it"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "live",
+                    "unreachable"
+                  ],
+                  "description": "unreachable: its transport dropped and could not be reopened yet"
+                },
+                "labels": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_.-]+$"
+                  },
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "name",
+                "pid",
+                "cwd",
+                "argv",
+                "created_at",
+                "title",
+                "cols",
+                "rows",
+                "shown",
+                "state",
+                "labels"
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "ok",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "ok",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "properties": {
+                "sessions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                        "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                      },
+                      "pid": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null",
+                            "description": "null when there is none"
+                          }
+                        ],
+                        "description": "The child's pid; null while unknown"
+                      },
+                      "cwd": {
+                        "type": "string"
+                      },
+                      "argv": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "null",
+                            "description": "null when there is none"
+                          }
+                        ],
+                        "description": "The argv it was created with; null when adopted from a previous Runtime"
+                      },
+                      "created_at": {
+                        "type": "number",
+                        "description": "ms since the epoch"
+                      },
+                      "title": {
+                        "type": "string",
+                        "description": "The last OSC 0/2 title the Session set; empty until it sets one"
+                      },
+                      "cols": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "rows": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "shown": {
+                        "type": "boolean",
+                        "description": "Whether a Pane of the current Layout shows it"
+                      },
+                      "state": {
+                        "type": "string",
+                        "enum": [
+                          "live",
+                          "unreachable"
+                        ],
+                        "description": "unreachable: its transport dropped and could not be reopened yet"
+                      },
+                      "labels": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.-]+$"
+                        },
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "pid",
+                      "cwd",
+                      "argv",
+                      "created_at",
+                      "title",
+                      "cols",
+                      "rows",
+                      "shown",
+                      "state",
+                      "labels"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "sessions"
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "ok",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                  "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                },
+                "lines": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "One string per row, trailing blanks trimmed; history first when scrollback was asked for"
+                },
+                "screen_start": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "Index in `lines` where the visible screen begins; 0 when no history was asked for or none exists"
+                },
+                "cols": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "rows": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "cursor": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "y": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "visible": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "visible"
+                  ],
+                  "description": "Relative to the visible screen"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "live",
+                    "unreachable"
+                  ],
+                  "description": "unreachable: the screen this Session last had, read from its emulator, not one its transport confirmed"
+                }
+              },
+              "required": [
+                "name",
+                "lines",
+                "screen_start",
+                "cols",
+                "rows",
+                "cursor",
+                "title",
+                "state"
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "ok",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "ok",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "properties": {
+                "revision": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "Increments whenever the tree changes, by an apply or a divider drag; pass it back to layout.apply to refuse a stale write"
+                },
+                "root": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    {
+                      "type": "null",
+                      "description": "null when there is none"
+                    }
+                  ],
+                  "description": "The applied tree with sizes as they stand after drags"
+                },
+                "focus": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                      "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                    },
+                    {
+                      "type": "null",
+                      "description": "null when there is none"
+                    }
+                  ],
+                  "description": "The Session the keyboard goes to"
+                },
+                "stage": {
+                  "type": "object",
+                  "properties": {
+                    "cols": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "rows": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "cols",
+                    "rows"
+                  ]
+                },
+                "panes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "session": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                            "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                          },
+                          {
+                            "type": "null",
+                            "description": "null when there is none"
+                          }
+                        ]
+                      },
+                      "text": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null",
+                            "description": "null when there is none"
+                          }
+                        ]
+                      },
+                      "x": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "y": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "cols": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "rows": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "focused": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "session",
+                      "text",
+                      "x",
+                      "y",
+                      "cols",
+                      "rows",
+                      "focused"
+                    ]
+                  },
+                  "description": "Every Pane as fitted, in tree order; a squeezed-out Pane has 0 cols or rows"
+                }
+              },
+              "required": [
+                "revision",
+                "root",
+                "focus",
+                "stage",
+                "panes"
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "ok",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "properties": {
+                "revision": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "Increments whenever the tree changes, by an apply or a divider drag; pass it back to layout.apply to refuse a stale write"
+                },
+                "root": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    {
+                      "type": "null",
+                      "description": "null when there is none"
+                    }
+                  ],
+                  "description": "The applied tree with sizes as they stand after drags"
+                },
+                "focus": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                      "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                    },
+                    {
+                      "type": "null",
+                      "description": "null when there is none"
+                    }
+                  ],
+                  "description": "The Session the keyboard goes to"
+                },
+                "stage": {
+                  "type": "object",
+                  "properties": {
+                    "cols": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "rows": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "cols",
+                    "rows"
+                  ]
+                },
+                "panes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "session": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                            "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                          },
+                          {
+                            "type": "null",
+                            "description": "null when there is none"
+                          }
+                        ]
+                      },
+                      "text": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null",
+                            "description": "null when there is none"
+                          }
+                        ]
+                      },
+                      "x": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "y": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "cols": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "rows": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "focused": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "session",
+                      "text",
+                      "x",
+                      "y",
+                      "cols",
+                      "rows",
+                      "focused"
+                    ]
+                  },
+                  "description": "Every Pane as fitted, in tree order; a squeezed-out Pane has 0 cols or rows"
+                }
+              },
+              "required": [
+                "revision",
+                "root",
+                "focus",
+                "stage",
+                "panes"
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "ok",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "properties": {
+                "written": {
+                  "type": "boolean",
+                  "description": "Whether the sequence was written; false when OSC 52 is known unsupported"
+                }
+              },
+              "required": [
+                "written"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "ok",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "ok": {
+              "type": "boolean",
+              "const": false
+            },
+            "error": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "enum": [
+                    "invalid_request",
+                    "unknown_method",
+                    "invalid_params",
+                    "not_found",
+                    "conflict",
+                    "companion_error",
+                    "internal_error"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "ok",
+            "error"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "events": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/sessions.changed"
+        },
+        {
+          "$ref": "#/$defs/state.invalidated"
+        },
+        {
+          "$ref": "#/$defs/session.exited"
+        },
+        {
+          "$ref": "#/$defs/session.state"
+        },
+        {
+          "$ref": "#/$defs/session.changed"
+        },
+        {
+          "$ref": "#/$defs/layout.changed"
+        },
+        {
+          "$ref": "#/$defs/stage.changed"
+        },
+        {
+          "$ref": "#/$defs/theme.changed"
+        },
+        {
+          "$ref": "#/$defs/instance.stopping"
+        }
+      ]
+    },
+    "sessions.changed": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "event"
+        },
+        "event": {
+          "type": "string",
+          "const": "sessions.changed"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "sessions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                    "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                  },
+                  "pid": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null",
+                        "description": "null when there is none"
+                      }
+                    ],
+                    "description": "The child's pid; null while unknown"
+                  },
+                  "cwd": {
+                    "type": "string"
+                  },
+                  "argv": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      {
+                        "type": "null",
+                        "description": "null when there is none"
+                      }
+                    ],
+                    "description": "The argv it was created with; null when adopted from a previous Runtime"
+                  },
+                  "created_at": {
+                    "type": "number",
+                    "description": "ms since the epoch"
+                  },
+                  "title": {
+                    "type": "string",
+                    "description": "The last OSC 0/2 title the Session set; empty until it sets one"
+                  },
+                  "cols": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "rows": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "shown": {
+                    "type": "boolean",
+                    "description": "Whether a Pane of the current Layout shows it"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "live",
+                      "unreachable"
+                    ],
+                    "description": "unreachable: its transport dropped and could not be reopened yet"
+                  },
+                  "labels": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_.-]+$"
+                    },
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "name",
+                  "pid",
+                  "cwd",
+                  "argv",
+                  "created_at",
+                  "title",
+                  "cols",
+                  "rows",
+                  "shown",
+                  "state",
+                  "labels"
+                ]
+              }
+            },
+            "availability": {
+              "type": "string",
+              "enum": [
+                "ready",
+                "incomplete",
+                "unavailable"
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Random Runtime lifetime ID; distinct from the stable instance_id"
+            },
+            "generation": {
+              "type": "number",
+              "const": 1,
+              "description": "No Runtime replacement within one lifetime"
+            },
+            "sequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "description": "Publication watermark; not a replay cursor or timestamp"
+            }
+          },
+          "required": [
+            "sessions",
+            "availability",
+            "reason",
+            "instanceId",
+            "generation",
+            "sequence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "v",
+        "type",
+        "event",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": "Current state: replace the Session roster, including sizes, titles, visibility and reachability. Removal does not imply successful completion."
+    },
+    "state.invalidated": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "event"
+        },
+        "event": {
+          "type": "string",
+          "const": "state.invalidated"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Random Runtime lifetime ID; distinct from the stable instance_id"
+            },
+            "generation": {
+              "type": "number",
+              "const": 1,
+              "description": "No Runtime replacement within one lifetime"
+            },
+            "sequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "description": "Publication watermark; not a replay cursor or timestamp"
+            }
+          },
+          "required": [
+            "reason",
+            "instanceId",
+            "generation",
+            "sequence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "v",
+        "type",
+        "event",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": "Current state: the event exceeded the 2 MiB projection limit; invalidate observation and request state.get. No partial projection is complete."
+    },
+    "session.exited": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "event"
+        },
+        "event": {
+          "type": "string",
+          "const": "session.exited"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+              "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+            },
+            "code": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null",
+                  "description": "null when there is none"
+                }
+              ]
+            },
+            "signal": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null",
+                  "description": "null when there is none"
+                }
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Random Runtime lifetime ID; distinct from the stable instance_id"
+            },
+            "generation": {
+              "type": "number",
+              "const": 1,
+              "description": "No Runtime replacement within one lifetime"
+            },
+            "sequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "description": "Publication watermark; not a replay cursor or timestamp"
+            }
+          },
+          "required": [
+            "name",
+            "code",
+            "signal",
+            "reason",
+            "instanceId",
+            "generation",
+            "sequence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "v",
+        "type",
+        "event",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": "Transient: a Session's process ended, or adoption found it gone. code and signal are null when the Companion could not read them."
+    },
+    "session.state": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "event"
+        },
+        "event": {
+          "type": "string",
+          "const": "session.state"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+              "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "live",
+                "unreachable"
+              ]
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Random Runtime lifetime ID; distinct from the stable instance_id"
+            },
+            "generation": {
+              "type": "number",
+              "const": 1,
+              "description": "No Runtime replacement within one lifetime"
+            },
+            "sequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "description": "Publication watermark; not a replay cursor or timestamp"
+            }
+          },
+          "required": [
+            "name",
+            "state",
+            "instanceId",
+            "generation",
+            "sequence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "v",
+        "type",
+        "event",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": "Current state: a Session's transport was lost or came back. Input to an unreachable Session is refused; its screen stays readable as the one it last had."
+    },
+    "session.changed": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "event"
+        },
+        "event": {
+          "type": "string",
+          "const": "session.changed"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+              "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+            },
+            "title": {
+              "type": "string"
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Random Runtime lifetime ID; distinct from the stable instance_id"
+            },
+            "generation": {
+              "type": "number",
+              "const": 1,
+              "description": "No Runtime replacement within one lifetime"
+            },
+            "sequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "description": "Publication watermark; not a replay cursor or timestamp"
+            }
+          },
+          "required": [
+            "name",
+            "title",
+            "instanceId",
+            "generation",
+            "sequence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "v",
+        "type",
+        "event",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": "Transient: output or a title change reached a Session's screen; debounced. Capture it to read it."
+    },
+    "layout.changed": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "event"
+        },
+        "event": {
+          "type": "string",
+          "const": "layout.changed"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "layout": {
+              "type": "object",
+              "properties": {
+                "revision": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "Increments whenever the tree changes, by an apply or a divider drag; pass it back to layout.apply to refuse a stale write"
+                },
+                "root": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    {
+                      "type": "null",
+                      "description": "null when there is none"
+                    }
+                  ],
+                  "description": "The applied tree with sizes as they stand after drags"
+                },
+                "focus": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                      "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                    },
+                    {
+                      "type": "null",
+                      "description": "null when there is none"
+                    }
+                  ],
+                  "description": "The Session the keyboard goes to"
+                },
+                "stage": {
+                  "type": "object",
+                  "properties": {
+                    "cols": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "rows": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "cols",
+                    "rows"
+                  ]
+                },
+                "panes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "session": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                            "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                          },
+                          {
+                            "type": "null",
+                            "description": "null when there is none"
+                          }
+                        ]
+                      },
+                      "text": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null",
+                            "description": "null when there is none"
+                          }
+                        ]
+                      },
+                      "x": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "y": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "cols": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "rows": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "focused": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "session",
+                      "text",
+                      "x",
+                      "y",
+                      "cols",
+                      "rows",
+                      "focused"
+                    ]
+                  },
+                  "description": "Every Pane as fitted, in tree order; a squeezed-out Pane has 0 cols or rows"
+                }
+              },
+              "required": [
+                "revision",
+                "root",
+                "focus",
+                "stage",
+                "panes"
+              ]
+            },
+            "sessions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                    "description": "Session name: [a-z][a-z0-9_-]{0,31}"
+                  },
+                  "pid": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null",
+                        "description": "null when there is none"
+                      }
+                    ],
+                    "description": "The child's pid; null while unknown"
+                  },
+                  "cwd": {
+                    "type": "string"
+                  },
+                  "argv": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      {
+                        "type": "null",
+                        "description": "null when there is none"
+                      }
+                    ],
+                    "description": "The argv it was created with; null when adopted from a previous Runtime"
+                  },
+                  "created_at": {
+                    "type": "number",
+                    "description": "ms since the epoch"
+                  },
+                  "title": {
+                    "type": "string",
+                    "description": "The last OSC 0/2 title the Session set; empty until it sets one"
+                  },
+                  "cols": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "rows": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "shown": {
+                    "type": "boolean",
+                    "description": "Whether a Pane of the current Layout shows it"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "live",
+                      "unreachable"
+                    ],
+                    "description": "unreachable: its transport dropped and could not be reopened yet"
+                  },
+                  "labels": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_.-]+$"
+                    },
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "name",
+                  "pid",
+                  "cwd",
+                  "argv",
+                  "created_at",
+                  "title",
+                  "cols",
+                  "rows",
+                  "shown",
+                  "state",
+                  "labels"
+                ]
+              }
+            },
+            "cause": {
+              "type": "string",
+              "enum": [
+                "apply",
+                "drag",
+                "resize"
+              ]
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Random Runtime lifetime ID; distinct from the stable instance_id"
+            },
+            "generation": {
+              "type": "number",
+              "const": 1,
+              "description": "No Runtime replacement within one lifetime"
+            },
+            "sequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "description": "Publication watermark; not a replay cursor or timestamp"
+            }
+          },
+          "required": [
+            "layout",
+            "sessions",
+            "cause",
+            "instanceId",
+            "generation",
+            "sequence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "v",
+        "type",
+        "event",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": "Current state: the fitted Layout changed: an apply, a divider drag, or a stage resize."
+    },
+    "stage.changed": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "event"
+        },
+        "event": {
+          "type": "string",
+          "const": "stage.changed"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "cols": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Random Runtime lifetime ID; distinct from the stable instance_id"
+            },
+            "generation": {
+              "type": "number",
+              "const": 1,
+              "description": "No Runtime replacement within one lifetime"
+            },
+            "sequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "description": "Publication watermark; not a replay cursor or timestamp"
+            }
+          },
+          "required": [
+            "cols",
+            "rows",
+            "instanceId",
+            "generation",
+            "sequence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "v",
+        "type",
+        "event",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": "Current state: the stage took a new size from its sizing owner."
+    },
+    "theme.changed": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "event"
+        },
+        "event": {
+          "type": "string",
+          "const": "theme.changed"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "theme": {
+              "type": "string",
+              "enum": [
+                "dark",
+                "light"
+              ]
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Random Runtime lifetime ID; distinct from the stable instance_id"
+            },
+            "generation": {
+              "type": "number",
+              "const": 1,
+              "description": "No Runtime replacement within one lifetime"
+            },
+            "sequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "description": "Publication watermark; not a replay cursor or timestamp"
+            }
+          },
+          "required": [
+            "theme",
+            "instanceId",
+            "generation",
+            "sequence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "v",
+        "type",
+        "event",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": "Current state: the resolved fxnk theme changed."
+    },
+    "instance.stopping": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "event"
+        },
+        "event": {
+          "type": "string",
+          "const": "instance.stopping"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "instanceId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Random Runtime lifetime ID; distinct from the stable instance_id"
+            },
+            "generation": {
+              "type": "number",
+              "const": 1,
+              "description": "No Runtime replacement within one lifetime"
+            },
+            "sequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "description": "Publication watermark; not a replay cursor or timestamp"
+            }
+          },
+          "required": [
+            "instanceId",
+            "generation",
+            "sequence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "v",
+        "type",
+        "event",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": "Current state: instance.stop was accepted; the socket closes after this."
+    }
+  }
+}

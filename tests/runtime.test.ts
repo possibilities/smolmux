@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { createTestRenderer } from "@opentui/core/testing"
 import { fileURLToPath } from "node:url"
 import type { EventName, InstanceStatus, LayoutView, SessionView } from "../src/protocol.ts"
+import { eventSocketFrameSchema } from "../src/event-schema.ts"
 import { EMPTY_LAYOUT, Runtime } from "../src/runtime.ts"
 import { sessionIdentity } from "../src/session-identity.ts"
 import { FakeCompanion } from "./fixtures/fake-companion.ts"
@@ -27,7 +28,10 @@ async function harness(prepare?: (companion: FakeCompanion, transport: PtyTransp
       transport,
       environment: { PATH: process.env.PATH ?? "", HOME: "/home/test" },
     },
-    publish: (event, data) => events.push({ event, data }),
+    publish: (event, data) => {
+      expect(eventSocketFrameSchema.safeParse({ v: 1, type: "event", event, data }).success).toBe(true)
+      events.push({ event, data })
+    },
   })
   await runtime.start()
   return {
@@ -257,7 +261,7 @@ test("a stage resize refits and announces the new size once", async () => {
     await Bun.sleep(50)
     const stageChanges = app.events.filter((entry) => entry.event === "stage.changed")
     expect(stageChanges).toHaveLength(1)
-    expect(stageChanges[0]!.data).toEqual({ cols: 60, rows: 20 })
+    expect(stageChanges[0]!.data).toMatchObject({ cols: 60, rows: 20 })
     expect((await app.call<LayoutView>("layout.get")).stage).toEqual({ cols: 60, rows: 20 })
   } finally {
     await app.close()
@@ -397,7 +401,7 @@ test("a theme change retints in one pass and says so", async () => {
   const app = await harness()
   try {
     app.runtime.setTheme({ theme: "light", background: "#ffffff", source: "osc11", explicit: false })
-    expect(app.events.filter((entry) => entry.event === "theme.changed")).toEqual([
+    expect(app.events.filter((entry) => entry.event === "theme.changed")).toMatchObject([
       { event: "theme.changed", data: { theme: "light" } },
     ])
     expect((await app.call<InstanceStatus>("instance.status")).theme).toBe("light")
@@ -443,5 +447,26 @@ test("client.copy writes one OSC 52 through the renderer and keeps nothing", asy
     expect(status).toMatchObject({ name: "default", sessions: [] })
   } finally {
     await app.close()
+  }
+})
+
+test("event snapshots distinguish failed adoption, unknown inventory, and known unreachable Sessions", async () => {
+  for (const scenario of ["failed", "unknown", "unreachable"] as const) {
+    const app = await harness((companion, transport) => {
+      if (scenario === "failed") {
+        companion.list = async () => { throw new Error("source unavailable") }
+      } else {
+        const identity = sessionIdentity(INSTANCE, "survivor")
+        companion.add({ name: identity.companionName, labels: identity.labels, state: scenario === "unknown" ? "unreachable" : "live" })
+        transport.attachBehavior = "unreachable"
+      }
+    })
+    try {
+      const snapshot = await app.call<import("../src/protocol.ts").StateSnapshot>("state.get")
+      expect(snapshot.availability).toBe(scenario === "failed" ? "unavailable" : scenario === "unknown" ? "incomplete" : "ready")
+      expect(snapshot.state?.sessions.length).toBe(scenario === "unreachable" ? 1 : 0)
+      if (scenario === "unreachable") expect(snapshot.state?.sessions[0]?.state).toBe("unreachable")
+      else expect(snapshot.reason).toBeTruthy()
+    } finally { await app.close() }
   }
 })

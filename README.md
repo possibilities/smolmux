@@ -45,20 +45,28 @@ included, reaches the focused Session unchanged.
 ## Drive it
 
 Everything past start, stop, and attach is the API: one JSON object per line
-on the socket that `smolmux start` and `smolmux status` report.
+on the socket that `smolmux event-socket --name NAME` discovers without starting
+anything (`default` when omitted). `start` and `status` also report it.
 
 ```
 {"v":1,"type":"request","id":"1","method":"session.create","params":{"name":"reviewer","argv":["claude"],"cwd":"/Users/you/code/smolmux"}}
 {"v":1,"type":"request","id":"2","method":"layout.apply","params":{"root":{"row":[{"session":"tray","size":26},{"session":"reviewer"}]},"focus":"reviewer"}}
-{"v":1,"type":"request","id":"3","method":"events.subscribe"}
+{"v":1,"type":"request","id":"3","method":"event.subscribe"}
 ```
 
-The methods are `instance.status`, `instance.stop`, `events.subscribe`,
+The methods are `instance.status`, `instance.stop`, `event.subscribe`, `state.get`,
 `session.create`, `session.kill`, `session.list`, `session.capture`, `session.input`,
 `layout.apply`, `layout.get`, and `client.copy`. The events are `session.exited`,
-`session.changed`, `session.state`, `layout.changed`, `stage.changed`, `theme.changed`, and
+`session.changed`, `session.state`, `sessions.changed`, `state.invalidated`, `layout.changed`, `stage.changed`, `theme.changed`, and
 `instance.stopping`. The full reference is [docs/api.md](docs/api.md), and
-`smolmux api` prints the same contract as JSON Schema.
+`smolmux api` prints the same contract as JSON Schema. The checked-in
+[events.schema.json](events.schema.json) catalogs every event payload.
+
+Subscribe with exact names, literal trailing-`*` prefixes, or `*`, then request
+`state.get` and reconcile events by its sequence watermark. A new subscription
+replaces the connection's filters. On disconnect invalidate observation and
+resubscribe/resnapshot; transient Capture triggers and exit notifications are
+independent of the snapshot watermark.
 
 Use `session.input` for ordered keys, text, paste and mouse events. Input targets
 a Session without moving human focus. `session.changed` tells you a screen

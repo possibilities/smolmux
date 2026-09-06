@@ -1,4 +1,5 @@
 import { type CliRenderer, CliRenderEvents, type Selection } from "@opentui/core"
+import { EventFeed } from "./event-feed.ts"
 import { VERSION } from "./cli.ts"
 import { fxnkRamp, type FxnkThemeResolution } from "./host-palette.ts"
 import type { LayoutNode } from "./protocol.ts"
@@ -49,6 +50,9 @@ export function defaultLayout(names: readonly string[]): { root: LayoutNode; foc
 export class Runtime {
   readonly sessions: Sessions
   readonly stage: Stage
+  private readonly feed: EventFeed
+  private availability: "ready" | "incomplete" | "unavailable" = "unavailable"
+  private unavailableReason: string | null = "Adoption is pending"
   private theme: FxnkThemeResolution
   private shuttingDown = false
   private readonly donePromise: Promise<void>
@@ -66,21 +70,25 @@ export class Runtime {
     this.donePromise = new Promise((resolve) => {
       this.resolveDone = resolve
     })
+    this.feed = new EventFeed(() => ({ state: this.status(), availability: this.availability, reason: this.unavailableReason }), options.publish)
     this.theme = options.theme
     this.sessions = new Sessions({
       ...options.sessions,
       renderer,
       theme: options.theme,
       onExit: (name, exit) => this.publish("session.exited", { name, ...exit }),
-      onChanged: (name, title) => this.publish("session.changed", { name, title }),
+      onChanged: (name, title) => {
+        this.publish("session.changed", { name, title })
+        this.publishRoster()
+      },
       onState: (name, state) => this.publish("session.state", { name, state }),
-      onRoster: () => this.refit(),
+      onRoster: () => { this.refit(); this.publishRoster() },
     })
     this.stage = new Stage({
       renderer,
       panes: this.sessions,
       theme: options.theme,
-      onChanged: (cause) => this.publish("layout.changed", { layout: this.stage.view, cause }),
+      onChanged: (cause) => this.publish("layout.changed", { layout: this.stage.view, sessions: this.sessions.list(), cause }),
     })
     this.lastStage = this.stage.size
     this.renderer.on(CliRenderEvents.SELECTION, this.selectionHandler)
@@ -98,6 +106,8 @@ export class Runtime {
     try {
       const outcome = await this.sessions.adopt()
       if (this.shuttingDown) return
+      this.availability = outcome.unresolved.length ? "incomplete" : "ready"
+      this.unavailableReason = outcome.unresolved.length ? "Some Companion Sessions could not be identified during adoption" : null
       if (outcome.unresolved.length > 0) {
         this.options.report?.(
           `${outcome.unresolved.length} Companion session(s) unreachable; left for the next start`,
@@ -106,10 +116,13 @@ export class Runtime {
     } catch (error) {
       // A failed read must never be taken for an empty Companion: the
       // Sessions stay where they are for the next start.
+      this.availability = "unavailable"
+      this.unavailableReason = "Companion adoption failed"
       this.options.report?.(`could not adopt Sessions: ${message(error)}`)
     }
     if (this.shuttingDown) return
     this.applyDefaultLayout()
+    this.publishRoster()
   }
 
   waitUntilDone(): Promise<void> {
@@ -165,10 +178,12 @@ export class Runtime {
 
   /** The API's one way in. Params are already validated against the contract. */
   async handle(method: Method, params: unknown): Promise<unknown> {
-    if (this.shuttingDown && method !== "instance.status") {
+    if (this.shuttingDown && method !== "instance.status" && method !== "state.get") {
       throw new ApiFailure("conflict", "smolmux is shutting down")
     }
     switch (method) {
+      case "state.get":
+        return this.feed.snapshot()
       case "instance.status":
         return this.status()
       case "instance.stop": {
@@ -185,11 +200,14 @@ export class Runtime {
           // staying means session.list still names what is left and the
           // caller can retry against the same Instance.
           this.sessions.unseal()
+          this.publishRoster()
           throw new ApiFailure(
             "companion_error",
             `could not end ${survived.length} Session(s): ${survived.join(", ")}. The Instance is still running.`,
           )
         }
+        this.availability = "unavailable"
+        this.unavailableReason = "Instance is stopping"
         this.publish("instance.stopping", {})
         // Answer first: the reply is written before anything is torn down.
         setTimeout(() => {
@@ -197,8 +215,8 @@ export class Runtime {
         }, 0)
         return {}
       }
-      case "events.subscribe":
-        return {}
+      case "event.subscribe":
+        throw new ApiFailure("invalid_request", "Subscriptions belong to an API connection")
       case "session.create":
         return this.sessions.create(params as Params<"session.create">)
       case "session.kill": {
@@ -303,9 +321,13 @@ export class Runtime {
     if (this.renderer.copyToClipboardOSC52(text)) this.renderer.clearSelection()
   }
 
+  private publishRoster(): void {
+    this.publish("sessions.changed", { sessions: this.sessions.list(), availability: this.availability, reason: this.unavailableReason })
+  }
+
   private publish<E extends EventName>(event: E, data: EventData<E>): void {
     if (this.shuttingDown && event !== "instance.stopping") return
-    this.options.publish(event, data)
+    this.feed.publish(event, data)
   }
 }
 

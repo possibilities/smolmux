@@ -581,6 +581,7 @@ export class Sessions {
     this.sessions.delete(session.identity.name)
     this.clearChangeTimer(session.identity.name)
     session.destroy()
+    if (!this.shuttingDown) this.options.onRoster()
   }
 
   private remove(session: Session, exit: SessionExit): void {

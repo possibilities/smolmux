@@ -8,6 +8,7 @@ import { type CliOptions, parseArgs, usage, VERSION } from "./cli.ts"
 import { setListenerErrorHandler } from "./companion-client.ts"
 import { CompanionTransportFactory } from "./companion-transport.ts"
 import { loadConfig } from "./config.ts"
+import { discoverEventSocket } from "./event-discovery.ts"
 import { doctor } from "./doctor.ts"
 import {
   FxnkThemeMonitor,
@@ -67,6 +68,9 @@ async function main(): Promise<void> {
   const instance = resolveInstance(options.name)
 
   switch (options.command) {
+    case "event-socket":
+      process.stdout.write(`${await discoverEventSocket(instance)}\n`)
+      return
     case "api":
       process.stdout.write(`${JSON.stringify(contractDocument(), null, 2)}\n`)
       return
@@ -160,7 +164,7 @@ async function runRuntime(instance: Instance): Promise<void> {
     // adopted, so two Runtimes can never hold the same Sessions.
     apiServer = new ApiServer(socketPath, async (method: Method, params: unknown) => {
       await ready.promise
-      if (!runtime) throw new ApiFailure("internal", "the Runtime is not ready")
+      if (!runtime) throw new ApiFailure("internal_error", "the Runtime is not ready")
       return runtime.handle(method, params)
     })
     await apiServer.start()

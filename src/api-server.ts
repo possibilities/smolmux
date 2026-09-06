@@ -13,11 +13,12 @@ import {
   isMethod,
   MAX_LAYOUT_DEPTH,
   METHODS,
+  matchesEvent,
   type Method,
   requestSchema,
   successFrame,
 } from "./protocol.ts"
-import { isAddressInUse, listenerAnswers, removeSocketFile } from "./unix-socket.ts"
+import { checkEventSocketOwnership, isAddressInUse, listenerAnswers, removeSocketFile } from "./unix-socket.ts"
 import { privateRootDirectory } from "./zmx-environment.ts"
 
 const MAX_FRAME_BYTES = 1 << 20
@@ -63,7 +64,7 @@ export type ApiHandler = (method: Method, params: unknown) => Promise<unknown>
 type Connection = {
   id: number
   buffer: LineBuffer
-  subscribed: boolean
+  filters: string[] | null
   pending: number
   /** Frames not yet fully written; a large result can exceed the socket buffer. */
   outgoing: Uint8Array[]
@@ -92,6 +93,7 @@ export class ApiServer {
 
   async start(): Promise<void> {
     if (this.server) return
+    await checkEventSocketOwnership(this.path, undefined, true)
     const lockPath = lockPathFor(this.path)
     let lock = acquireExclusiveLock(lockPath)
     if (lock === null) lock = await waitForSingletonHandoff(lockPath)
@@ -140,14 +142,14 @@ export class ApiServer {
     if (!this.server) return
     const bytes = encoder.encode(encodeFrame(frame))
     for (const connection of [...this.connections.values()]) {
-      if (!connection.subscribed) continue
+      if (!connection.filters || !matchesEvent(connection.filters, frame.event)) continue
       this.enqueue(connection, bytes)
     }
   }
 
   get subscribers(): number {
     let count = 0
-    for (const connection of this.connections.values()) if (connection.subscribed) count += 1
+    for (const connection of this.connections.values()) if (connection.filters) count += 1
     return count
   }
 
@@ -169,12 +171,16 @@ export class ApiServer {
     const connection: Connection = {
       id,
       buffer: new LineBuffer(MAX_FRAME_BYTES),
-      subscribed: false,
+      filters: null,
       pending: 0,
       outgoing: [],
       outgoingBytes: 0,
     }
     socket.data = connection
+    if (this.connections.size >= 128) {
+      socket.terminate()
+      return
+    }
     this.connections.set(id, connection)
     this.sockets.set(id, socket)
   }
@@ -248,7 +254,7 @@ export class ApiServer {
             this.send(
               connection,
               encodeFrame(
-                failureFrame(frameId(line), "internal", error instanceof Error ? error.message : String(error)),
+                failureFrame(frameId(line), "internal_error", error instanceof Error ? error.message : String(error)),
               ),
             )
           })
@@ -318,16 +324,17 @@ export class ApiServer {
       this.send(connection, encodeFrame(failureFrame(id, "invalid_params", reasons.join("; "))))
       return
     }
-    if (method === "events.subscribe") {
-      connection.subscribed = true
-      this.send(connection, encodeFrame(successFrame(id, {})))
+    if (method === "event.subscribe") {
+      const events = [...new Set((checked.data as { events: string[] }).events)]
+      this.send(connection, encodeFrame(successFrame(id, { subscribed: true, events })))
+      connection.filters = events
       return
     }
     try {
       const result = await this.handle(method, checked.data)
       this.send(connection, encodeFrame(successFrame(id, result)))
     } catch (error) {
-      const code: ErrorCode = error instanceof ApiFailure ? error.code : "internal"
+      const code: ErrorCode = error instanceof ApiFailure ? error.code : "internal_error"
       const message = error instanceof Error ? error.message : String(error)
       this.send(connection, encodeFrame(failureFrame(id, code, message)))
     }

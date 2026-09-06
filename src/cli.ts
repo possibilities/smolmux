@@ -3,7 +3,7 @@ import { normalizeInstanceName } from "./instance.ts"
 
 export const VERSION = packageMetadata.version
 
-export const COMMANDS = ["start", "attach", "stop", "status", "api", "doctor", "runtime"] as const
+export const COMMANDS = ["start", "attach", "stop", "status", "api", "doctor", "event-socket", "runtime"] as const
 export type Command = (typeof COMMANDS)[number]
 
 export type CliOptions = {
@@ -80,6 +80,7 @@ Commands:
   attach         attach this terminal to a running Instance
   stop           end every Session and the Instance
   status         print the Instance as JSON
+  event-socket   print the selected live Instance's event-capable API socket
   api            print the API contract as JSON
   doctor         verify the Companion and its private directory
 

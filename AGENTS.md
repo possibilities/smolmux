@@ -14,7 +14,7 @@
   by the Runtime from that definition, printed by `smolmux api`, and described in
   `docs/api.md` in the same commit. `tests/vocabulary.test.ts` fails when
   `docs/api.md` omits a method; the rest is judgement, in the same commit.
-- The CLI is `start`, `attach`, `stop`, `status`, `api`, `doctor`, and the
+- The CLI is `start`, `attach`, `stop`, `status`, `api`, `doctor`, `event-socket`, and the
   hidden `runtime` verb the Companion execs. Do not add a verb for anything
   the API owns. `smolmux` with no verb starts if needed and attaches.
 - smolmux claims exactly one chord. The prefix (`ctrl+b`) is a latch the thin
@@ -232,3 +232,11 @@
   which in an ADR. Drain is the cheaper first answer. Until one exists, the
   protocol version does not move. Note that `src/protocol.ts` is smolmux's own
   API version and is unrelated.
+
+- The event feed uses a random Runtime lifetime `instanceId`, distinct from the
+  stable Instance id used for sockets and adoption. `event.subscribe` replaces
+  connection-local literal filters; `state.get` reads the complete projection
+  synchronously with its publication watermark. `session.changed` and
+  `session.exited` are transient notifications and never discarded by snapshot
+  watermarks. `sessions.changed` owns roster replacement/removal. Generate
+  `events.schema.json` from `src/event-schema.ts` whenever the contract changes.
