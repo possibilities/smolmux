@@ -78,6 +78,7 @@ export class FakeCompanion {
   async kill(name: string): Promise<void> {
     if (this.killRefuses.has(name)) throw new Error(`kill ${name} refused`)
     this.killed.push(name)
+    this.sessions.delete(name)
   }
 
   async forget(name: string): Promise<void> {

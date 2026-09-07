@@ -12,6 +12,8 @@ import type { SessionIdentity } from "./session-identity.ts"
  * without a Companion on the machine.
  */
 export interface SessionTransport {
+  readonly pid?: number
+
   /**
    * Wire the consumer. Whatever arrived before this call is delivered now,
    * in order, so a transport that was attached before its Session was
@@ -159,4 +161,11 @@ export class HandlerRelay {
     if (this.handlers) deliver(this.handlers)
     else this.backlog.push(deliver)
   }
+}
+
+/** Ownership operations are separate from detaching a terminal consumer. */
+export interface LocalProcessOwner extends SessionTransportFactory {
+  terminate(identity: SessionIdentity): Promise<SessionExit>
+  pause(identity: SessionIdentity, paused: boolean): Promise<void>
+  close(): Promise<void>
 }

@@ -203,7 +203,7 @@ export class ApiClient {
     let frame: ResponseFrame | EventFrame
     try {
       frame = JSON.parse(line)
-      if (frame?.v !== 1 || (frame.type !== "event" && frame.type !== "response")) throw new Error("invalid frame")
+      if (frame?.v !== PROTOCOL_VERSION || (frame.type !== "event" && frame.type !== "response")) throw new Error("invalid frame")
       if (frame.type === "response" && !responseFrameSchema.safeParse(frame).success) throw new Error("invalid response")
     } catch {
       this.disconnect(new ApiFailure("internal_error", "invalid response frame"))

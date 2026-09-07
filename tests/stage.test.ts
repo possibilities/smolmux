@@ -57,16 +57,16 @@ async function harness(names: string[], width = 100, height = 30) {
 
 const sixPanels: LayoutNode = {
   row: [
-    { column: [{ text: "notes", size: 8, min: 3 }, { session: "tray" }], size: 26, min: 24 },
-    { session: "reviewer", min: 20 },
-    { session: "docs", size: 20, min: 10 },
+    { column: [{ text: "notes", size: 8, min: 3 }, { app: "tray" }], size: 26, min: 24 },
+    { app: "reviewer", min: 20 },
+    { app: "docs", size: 20, min: 10 },
   ],
 }
 
 /** Geometry as smolmux computed it, which is what the API reports and what the
  * next frame draws; Yoga only publishes it on a render. */
-const rect = (view: { panes: { session: string | null; x: number; y: number; cols: number; rows: number }[] }, name: string) => {
-  const pane = view.panes.find((candidate) => candidate.session === name)!
+const rect = (view: { panes: { app: string | null; x: number; y: number; cols: number; rows: number }[] }, name: string) => {
+  const pane = view.panes.find((candidate) => candidate.app === name)!
   return { x: pane.x, y: pane.y, cols: pane.cols, rows: pane.rows }
 }
 
@@ -115,7 +115,7 @@ test("a Session that leaves the Layout is hidden and keeps its size", async () =
     await stage.setup.renderOnce()
     const docs = stage.terminals.get("docs")!
     const hidden = [docs.x, docs.y, docs.width, docs.height]
-    stage.stage.apply({ row: [{ session: "tray", size: 26 }, { session: "reviewer" }] }, "reviewer")
+    stage.stage.apply({ row: [{ app: "tray", size: 26 }, { app: "reviewer" }] }, "reviewer")
     await stage.setup.renderOnce()
     expect(docs.visible).toBe(false)
     expect([docs.x, docs.y, docs.width, docs.height]).toEqual(hidden)
@@ -129,7 +129,7 @@ test("a Session that leaves the Layout is hidden and keeps its size", async () =
 test("keyboard focus is the API's alone and follows the Layout", async () => {
   const stage = await harness(["tray", "reviewer"])
   try {
-    stage.stage.apply({ row: [{ session: "tray", size: 26 }, { session: "reviewer" }] }, "reviewer")
+    stage.stage.apply({ row: [{ app: "tray", size: 26 }, { app: "reviewer" }] }, "reviewer")
     expect(stage.terminals.get("reviewer")!.focused).toBe(true)
     expect(stage.terminals.get("tray")!.focused).toBe(false)
 
@@ -137,12 +137,12 @@ test("keyboard focus is the API's alone and follows the Layout", async () => {
     stage.terminals.get("tray")!.focus()
     expect(stage.terminals.get("tray")!.focused).toBe(false)
 
-    stage.stage.apply({ row: [{ session: "tray", size: 26 }, { session: "reviewer" }] }, "tray")
+    stage.stage.apply({ row: [{ app: "tray", size: 26 }, { app: "reviewer" }] }, "tray")
     expect(stage.terminals.get("tray")!.focused).toBe(true)
     expect(stage.terminals.get("reviewer")!.focused).toBe(false)
 
     // A focused Session that leaves the screen takes the keyboard with it.
-    expect(stage.stage.apply({ session: "reviewer" }, undefined).focus).toBeNull()
+    expect(stage.stage.apply({ app: "reviewer" }, undefined).focus).toBeNull()
     expect(stage.terminals.get("reviewer")!.focused).toBe(false)
   } finally {
     stage.close()
@@ -152,12 +152,12 @@ test("keyboard focus is the API's alone and follows the Layout", async () => {
 test("a Pane naming a Session that does not exist draws nothing and keeps its place", async () => {
   const stage = await harness(["tray"])
   try {
-    const view = stage.stage.apply({ row: [{ session: "tray", size: 26 }, { session: "later" }] }, "tray")
+    const view = stage.stage.apply({ row: [{ app: "tray", size: 26 }, { app: "later" }] }, "tray")
     expect(stage.shown).toEqual(["tray"])
     // The Layout is still the caller's, so creating that Session later fills
     // its Pane without another apply.
-    expect(view.root).toEqual({ row: [{ session: "tray", size: 26 }, { session: "later" }] })
-    expect(view.panes.map((pane) => pane.session)).toEqual(["tray", "later"])
+    expect(view.root).toEqual({ row: [{ app: "tray", size: 26 }, { app: "later" }] })
+    expect(view.panes.map((pane) => pane.app)).toEqual(["tray", "later"])
   } finally {
     stage.close()
   }
@@ -204,7 +204,7 @@ test("a stale apply is refused so a human's drag is never clobbered", async () =
 test("a drag in flight re-baselines on an apply rather than reverting it", async () => {
   const stage = await harness(["a", "b"])
   try {
-    stage.stage.apply({ row: [{ session: "a", size: 20 }, { session: "b" }] }, "a")
+    stage.stage.apply({ row: [{ app: "a", size: 20 }, { app: "b" }] }, "a")
     const divider = { id: ":0", axis: "row" as const, rect: { x: 20, y: 0, cols: 1, rows: 30 } }
     const event = (x: number) => ({ x, y: 0, preventDefault: () => {}, stopPropagation: () => {} })
 
@@ -212,13 +212,13 @@ test("a drag in flight re-baselines on an apply rather than reverting it", async
     ;(stage.stage as never as { beginDrag(id: string, event: unknown): void }).beginDrag(":0", event(20))
 
     // A caller applies a different Layout mid-gesture, and is told it worked.
-    const applied = stage.stage.apply({ row: [{ session: "b", size: 40 }, { session: "a" }] }, "b")
-    expect(applied.root).toEqual({ row: [{ session: "b", size: 40 }, { session: "a" }] })
+    const applied = stage.stage.apply({ row: [{ app: "b", size: 40 }, { app: "a" }] }, "b")
+    expect(applied.root).toEqual({ row: [{ app: "b", size: 40 }, { app: "a" }] })
 
     // The next drag event must not put the old tree back.
     ;(stage.stage as never as { continueDrag(divider: unknown, event: unknown): void }).continueDrag(divider, event(25))
     const after = stage.stage.view
-    expect((after.root as { row: { session?: string }[] }).row[0]!.session).toBe("b")
+    expect((after.root as { row: { app?: string }[] }).row[0]!.app).toBe("b")
     expect(after.focus).toBe("b")
   } finally {
     stage.close()
@@ -228,7 +228,7 @@ test("a drag in flight re-baselines on an apply rather than reverting it", async
 test("a Layout that cannot be drawn is not the one the Stage keeps", async () => {
   const stage = await harness(["a"])
   try {
-    const good = stage.stage.apply({ session: "a" }, "a")
+    const good = stage.stage.apply({ app: "a" }, "a")
     const panes = stage.terminals.get("a")!
     // Make the next draw throw the way a renderer failure would.
     const original = panes.captureScreen.bind(panes)
@@ -241,7 +241,7 @@ test("a Layout that cannot be drawn is not the one the Stage keeps", async () =>
       },
       configurable: true,
     })
-    expect(() => stage.stage.apply({ row: [{ session: "a" }, { text: "next" }] }, "a")).toThrow("renderer is gone")
+    expect(() => stage.stage.apply({ row: [{ app: "a" }, { text: "next" }] }, "a")).toThrow("renderer is gone")
     void original
     // The Stage still holds the tree it could draw, and its revision did not move.
     expect(stage.stage.view.root).toEqual(good.root)

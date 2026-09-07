@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { METHODS, NAMED_KEYS } from "../src/protocol.ts"
 import { isNamedKey, keyEventFor, keyEventsForText, mouseDeliveryFor } from "../src/session-input.ts"
 
-const params = METHODS["session.input"].params
+const params = METHODS["app.input"].params
 
 describe("key events", () => {
   test("a character key carries its own text and its unshifted codepoint", () => {

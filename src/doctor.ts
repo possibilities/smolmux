@@ -1,3 +1,4 @@
+import { resolveLocalHelper } from "./local-transport.ts"
 import { apiSocketPathFor } from "./api-server.ts"
 import { VERSION } from "./cli.ts"
 import { type Instance, resolveInstance } from "./instance.ts"
@@ -35,6 +36,7 @@ export type DoctorReport = {
 export async function doctor(
   env: NodeJS.ProcessEnv = process.env,
   instance: Instance = resolveInstance(null, env),
+  localOnly = false,
 ): Promise<DoctorReport> {
   const rows: [string, string][] = [["smolmux", VERSION]]
   let ok = true
@@ -43,6 +45,12 @@ export async function doctor(
     rows.push([label, text])
   }
 
+  try { rows.push(["local PTY", await resolveLocalHelper(env)]) }
+  catch (error) { fail("local PTY", errorMessage(error)) }
+  if (localOnly) {
+    rows.push(["mode", "local-only foreground"], ["api", apiSocketPathFor(instance.id)])
+    return { ok, lines: rows.map(([label, value]) => `${label}: ${value}`) }
+  }
   let companion: ResolvedCompanion | null = null
   try {
     companion = await resolveCompanion(env)

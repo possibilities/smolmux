@@ -245,11 +245,11 @@ export function paneGeometries(fitted: FittedLayout, focus: string | null): Pane
   // renderable at.
   const drawnFocus = fitted.leaves.reduce(
     (last, leaf, index) =>
-      "session" in leaf.node && leaf.node.session === focus && leaf.rect.cols > 0 && leaf.rect.rows > 0 ? index : last,
+      "app" in leaf.node && leaf.node.app === focus && leaf.rect.cols > 0 && leaf.rect.rows > 0 ? index : last,
     -1,
   )
   return fitted.leaves.map((leaf, index) => ({
-    session: "session" in leaf.node ? leaf.node.session : null,
+    app: "app" in leaf.node ? leaf.node.app : null,
     text: "text" in leaf.node ? leaf.node.text : null,
     x: leaf.rect.x,
     y: leaf.rect.y,
@@ -260,10 +260,10 @@ export function paneGeometries(fitted: FittedLayout, focus: string | null): Pane
 }
 
 /** Every Session name a tree shows. */
-export function layoutSessions(root: LayoutNode | null): string[] {
+export function layoutApps(root: LayoutNode | null): string[] {
   const names: string[] = []
   const visit = (node: LayoutNode): void => {
-    if ("session" in node) names.push(node.session)
+    if ("app" in node) names.push(node.app)
     for (const child of containerChildren(node) ?? []) visit(child)
   }
   if (root) visit(root)

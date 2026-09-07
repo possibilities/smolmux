@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url"
 import { ApiClient } from "../src/api-client.ts"
 import { apiSocketPathFor } from "../src/api-server.ts"
 import { resolveInstance } from "../src/instance.ts"
-import type { EventFrame, LayoutView, SessionView } from "../src/protocol.ts"
+import type { EventFrame, LayoutView, AppView } from "../src/protocol.ts"
 import { CompanionCommand } from "../src/zmx-command.ts"
 import { COMPANION_BINARY_NAME } from "../src/zmx-environment.ts"
 
@@ -97,11 +97,11 @@ test.skipIf(!ENABLED)(
       const snapshot = await client.request("state.get")
       expect(snapshot.availability).toBe("ready")
       const status = snapshot.state!
-      expect(status).toMatchObject({ name: "default", sessions: [], theme: "dark" })
-      expect(status.layout.root).toEqual({ text: "no sessions" })
+      expect(status).toMatchObject({ name: "default", apps: [], theme: "dark" })
+      expect(status.layout.root).toEqual({ text: "no apps" })
 
       // Two Sessions, then a Layout that shows both.
-      const tray = await client.request("session.create", {
+      const tray = await client.request("app.create", { pty: "companion",
         name: "tray",
         argv: [FAKE_APP],
         cwd: ROOT,
@@ -110,64 +110,64 @@ test.skipIf(!ENABLED)(
       })
       // Nobody has applied a Layout, so the Runtime's own one shows the first
       // Session rather than an empty state that claims nothing is running.
-      expect(tray).toMatchObject({ name: "tray", shown: true, state: "live" })
-      await client.request("session.create", {
+      expect(tray).toMatchObject({ name: "tray", shown: true, state: "running" })
+      await client.request("app.create", { pty: "companion",
         name: "main",
         argv: [FAKE_APP],
         cwd: ROOT,
         env: { SMOLMUX_TEST_BANNER: "main ready" },
       })
 
-      const layout = await client.request("layout.apply", {
-        root: { row: [{ session: "tray", size: 26, min: 20 }, { session: "main", min: 20 }] },
+      const layout = await client.request("layout.apply", { visible: ["tray", "main"],
+        root: { row: [{ app: "tray", size: 26, min: 20 }, { app: "main", min: 20 }] },
         focus: "main",
       })
       expect(layout.focus).toBe("main")
-      expect(layout.panes.map((pane) => pane.session)).toEqual(["tray", "main"])
+      expect(layout.panes.map((pane) => pane.app)).toEqual(["tray", "main"])
       expect(layout.revision).toBeGreaterThan(0)
 
       // Capture reads a Session's screen whether or not a Pane shows it. The
       // Pane's size reaches the PTY on a render frame rather than inside the
       // apply, so wait for the width this asserts and not only for the banner.
       await waitUntil(async () => {
-        const capture = await client!.request("session.capture", { name: "tray" })
+        const capture = await client!.request("app.capture", { name: "tray" })
         return capture.lines.join("").includes("tray ready") && capture.cols === 26
       })
-      const capture = await client.request("session.capture", { name: "tray" })
+      const capture = await client.request("app.capture", { name: "tray" })
       expect(capture.title).toBe("the tray")
       expect(capture.cols).toBe(26)
       expect(capture.screen_start).toBe(0)
 
       // History crosses the socket whole, and the visible screen is its tail.
-      const withHistory = await client.request("session.capture", { name: "tray", scrollback: 200 })
+      const withHistory = await client.request("app.capture", { name: "tray", scrollback: 200 })
       expect(withHistory.lines.slice(withHistory.screen_start)).toEqual(capture.lines)
       await expect(
-        client.request("session.capture", { name: "tray", scrollback: 100_000 }),
+        client.request("app.capture", { name: "tray", scrollback: 100_000 }),
       ).rejects.toMatchObject({ code: "invalid_params" })
 
       // Input crosses the socket as intent and reaches the PTY as bytes: the
       // fake app echoes a completed line back, so `got:` proves the whole
       // path, encoder included.
-      await client.request("session.input", {
+      await client.request("app.input", {
         name: "main",
         events: [{ text: "hello" }, { key: "enter" }],
       })
       await waitUntil(async () => {
-        const screen = await client!.request("session.capture", { name: "main" })
+        const screen = await client!.request("app.capture", { name: "main" })
         return screen.lines.join("\n").includes("got:hello")
       })
 
       // Mouse needs the coordinates only a Pane gives it.
       await expect(
-        client.request("session.input", { name: "tray", events: [{ mouse: { action: "down", x: 0, y: 0 } }] }),
+        client.request("app.input", { name: "tray", events: [{ mouse: { action: "down", x: 0, y: 0 } }] }),
       ).resolves.toBeDefined()
       await expect(
-        client.request("session.input", { name: "nosuch", events: [{ text: "x" }] }),
+        client.request("app.input", { name: "nosuch", events: [{ text: "x" }] }),
       ).rejects.toMatchObject({ code: "not_found" })
 
       // A stale Layout write is refused rather than clobbering what moved.
       await expect(
-        client.request("layout.apply", { root: { session: "main" }, revision: layout.revision - 1 }),
+        client.request("layout.apply", { visible: ["main"], root: { app: "main" }, revision: layout.revision - 1 }),
       ).rejects.toMatchObject({ code: "conflict" })
 
       // A human attaches, sees the Layout, and detaches without ending anything.
@@ -217,8 +217,9 @@ test.skipIf(!ENABLED)(
       attached = null
 
       // Detaching a Client never ends a Session or the Runtime.
-      const afterDetach = await client.request("session.list")
-      expect(afterDetach.sessions.map((session) => session.name)).toEqual(["tray"])
+      const afterDetach = await client.request("app.list")
+      expect(afterDetach.apps.map((app) => [app.name, app.state]).sort((a, b) => a[0]!.localeCompare(b[0]!))).toEqual([["main", "exited"], ["tray", "running"]])
+      await client.request("app.remove", { name: "main" })
 
       // Nothing of the copy is kept: a Client attaching later gets the screen
       // through Restore and no OSC 52 with it.
@@ -244,7 +245,7 @@ test.skipIf(!ENABLED)(
       attached = null
 
       // A Session that ends is reported and leaves the roster.
-      await client.request("session.kill", { name: "tray" })
+      await client.request("app.remove", { name: "tray" })
       await waitUntil(() =>
         events.some(
           (event) => event.event === "session.exited" && (event.data as { name: string }).name === "tray",
@@ -254,7 +255,7 @@ test.skipIf(!ENABLED)(
         (event) => event.event === "session.exited" && (event.data as { name: string }).name === "tray",
       )!.data as { name: string }
       expect(exited.name).toBe("tray")
-      await waitUntil(async () => (await client!.request("session.list")).sessions.length === 0)
+      await waitUntil(async () => (await client!.request("app.list")).apps.length === 0)
 
       // Stop is total: every Session and the Runtime.
       await client.request("instance.stop")
@@ -285,7 +286,7 @@ test.skipIf(!ENABLED)(
     try {
       await smolmux(["start"], env)
       client = await ApiClient.connect(socketPath)
-      await client.request("session.create", {
+      await client.request("app.create", { pty: "companion",
         name: "survivor",
         argv: [FAKE_APP],
         cwd: ROOT,
@@ -313,15 +314,15 @@ test.skipIf(!ENABLED)(
       const status = afterSnapshot.state!
       expect(status.instance_id).toBe(before.instance_id)
       expect(status.pid).not.toBe(before.pid)
-      const survivor = status.sessions.find((session: SessionView) => session.name === "survivor")
-      expect(survivor).toMatchObject({ name: "survivor", state: "live", labels: { role: "worker" } })
+      const survivor = status.apps.find((app: AppView) => app.name === "survivor")
+      expect(survivor).toMatchObject({ name: "survivor", state: "running", labels: { role: "worker" } })
       // Its argv is not recoverable from the Companion's display string.
       expect(survivor!.argv).toBeNull()
       // A Runtime with Sessions shows one rather than its empty state.
-      expect((status.layout as LayoutView).root).toEqual({ session: "survivor" })
+      expect((status.layout as LayoutView).root).toEqual({ app: "survivor" })
 
       await waitUntil(async () => {
-        const capture = await client!.request("session.capture", { name: "survivor" })
+        const capture = await client!.request("app.capture", { name: "survivor" })
         return capture.lines.join("").includes("still here")
       })
 
@@ -353,11 +354,11 @@ test.skipIf(!ENABLED)(
 
       first = await ApiClient.connect(defaultSocket)
       second = await ApiClient.connect(namedSocket)
-      await first.request("session.create", { name: "only-here", argv: [FAKE_APP], cwd: ROOT })
-      expect((await first.request("session.list")).sessions.map((session: SessionView) => session.name)).toEqual([
+      await first.request("app.create", { pty: "companion", name: "only-here", argv: [FAKE_APP], cwd: ROOT })
+      expect((await first.request("app.list")).apps.map((app: AppView) => app.name)).toEqual([
         "only-here",
       ])
-      expect((await second.request("session.list")).sessions).toEqual([])
+      expect((await second.request("app.list")).apps).toEqual([])
       expect((await second.request("instance.status")).name).toBe("review")
 
       // Starting a name that is already running joins it rather than racing.

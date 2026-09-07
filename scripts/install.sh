@@ -2,11 +2,13 @@
 
 set -euo pipefail
 
-# Canonical source installation for smolmux and the one native program it pins.
+# Canonical source installation for smolmux and its native PTY owners.
 # Consumers and fleet automation use this same entrypoint.
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mode="${1:-}"
+local_only="${2:-}"
+[[ -z "$local_only" || "$local_only" == --local-only ]] || { printf 'unknown installation option\n' >&2; exit 2; }
 
 fail() {
   printf 'smolmux source install: %s\n' "$*" >&2
@@ -16,7 +18,7 @@ fail() {
 case "$mode" in
   --install|--check) ;;
   -h|--help)
-    printf 'usage: %s --install|--check\n' "$0"
+    printf 'usage: %s --install|--check [--local-only]\n' "$0"
     exit 0
     ;;
   *) fail 'expected --install or --check' ;;
@@ -32,11 +34,16 @@ printf '%s\n' \
   "  verify the complete installation with smolmux doctor"
 
 if [[ "$mode" == --check ]]; then
-  SMOLMUX_COMPANION_INSTALL_DIR="$install_dir" "$root_dir/scripts/install-companion.sh" --check
+  if [[ "$local_only" != --local-only ]]; then
+    SMOLMUX_COMPANION_INSTALL_DIR="$install_dir" "$root_dir/scripts/install-companion.sh" --check
+  fi
+  command -v "${SMOLMUX_LOCAL_CC:-cc}" >/dev/null || fail "C compiler required for local PTYs"
   exit 0
 fi
 
-for command in bun git zig; do
+commands=(bun "${SMOLMUX_LOCAL_CC:-cc}")
+if [[ "$local_only" != --local-only ]]; then commands+=(git zig); fi
+for command in "${commands[@]}"; do
   command -v "$command" >/dev/null 2>&1 || fail "required command not found: $command"
 done
 
@@ -48,11 +55,21 @@ bun_bin="${BUN_INSTALL:-$HOME/.bun}/bin"
 
 mkdir -p "$install_dir"
 
-SMOLMUX_COMPANION_INSTALL_DIR="$install_dir" "$root_dir/scripts/install-companion.sh"
+"$root_dir/scripts/build-local.sh" "$install_dir/smolmux-local-pty"
+if [[ "$local_only" != --local-only ]]; then
+  SMOLMUX_COMPANION_INSTALL_DIR="$install_dir" "$root_dir/scripts/install-companion.sh"
+fi
+doctor_flags=(doctor)
+if [[ "$local_only" == --local-only ]]; then doctor_flags+=(--local-only); fi
 
 PATH="$install_dir:${PATH:-}" \
 SMOLMUX_ZMX_PATH="$companion_installed" \
-bun "$root_dir/src/index.ts" doctor \
+SMOLMUX_LOCAL_PTY_PATH="$install_dir/smolmux-local-pty" \
+bun "$root_dir/src/index.ts" "${doctor_flags[@]}" \
   || fail 'smolmux doctor rejected the source installation'
 
-printf 'smolmux source install: linked smolmux and installed the pinned Companion from source\n'
+if [[ "$local_only" == --local-only ]]; then
+  printf 'smolmux source install: linked smolmux and built the local PTY helper\n'
+else
+  printf 'smolmux source install: linked smolmux and built the local PTY helper and pinned Companion\n'
+fi

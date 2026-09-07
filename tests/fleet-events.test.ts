@@ -16,8 +16,9 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 const context = { instanceId: "test-lifetime", generation: 1 as const, sequence: 1 }
 function status(): InstanceStatus {
   return { version: "0.8.0", pid: 42, name: "default", instance_id: "stable-id", socket: "/tmp/test.api",
-    stage: { cols: 80, rows: 24 }, theme: "dark", sessions: [],
-    layout: { revision: 0, root: null, focus: null, stage: { cols: 80, rows: 24 }, panes: [] } }
+    stage: { cols: 80, rows: 24 }, theme: "dark", apps: [],
+    host: "headless", capabilities: { local: false, companion: true },
+    layout: { visible: [], revision: 0, root: null, focus: null, stage: { cols: 80, rows: 24 }, panes: [] } }
 }
 async function serve(handle: ConstructorParameters<typeof ApiServer>[1] = async () => ({})) {
   const dir = await mkdtemp("/tmp/smolmux-events-")
@@ -38,12 +39,12 @@ test("published schema is generated from the runtime contract, including optiona
   const document = eventSchemaDocument() as { $schema: string; $defs: { events: { anyOf: { $ref: string }[] } } }
   expect(await Bun.file(new URL("../events.schema.json", import.meta.url)).json()).toEqual(document)
   expect(document.$schema).toBe("https://json-schema.org/draft/2020-12/schema")
-  expect(document.$defs.events.anyOf.map((ref) => ref.$ref)).toContain("#/$defs/sessions.changed")
+  expect(document.$defs.events.anyOf.map((ref) => ref.$ref)).toContain("#/$defs/apps.changed")
   for (const params of [undefined, null, {}]) {
-    expect(eventSocketFrameSchema.safeParse({ v: 1, type: "request", id: "x", method: "session.create", params }).success).toBe(false)
+    expect(eventSocketFrameSchema.safeParse({ v: 2, type: "request", id: "x", method: "app.create", params }).success).toBe(false)
   }
   for (const params of [undefined, null, {}, { events: ["future.*"] }]) {
-    expect(eventSocketFrameSchema.safeParse({ v: 1, type: "request", id: "x", method: "event.subscribe", params }).success).toBe(true)
+    expect(eventSocketFrameSchema.safeParse({ v: 2, type: "request", id: "x", method: "event.subscribe", params }).success).toBe(true)
   }
 })
 
@@ -56,7 +57,7 @@ test("exact, prefix and wildcard filters replace per connection, deduplicate, an
   await b.request("event.subscribe", { events: ["session.*", "future.event"] })
   const publish = () => {
     server.broadcast(eventFrame("theme.changed", { ...context, theme: "light" }))
-    server.broadcast(eventFrame("session.changed", { ...context, name: "a", title: "hello" }))
+    server.broadcast(eventFrame("session.changed", { sessionId: "00000000-0000-4000-8000-000000000001", ...context, name: "a", title: "hello" }))
   }
   publish(); await settle()
   expect(left.map((e) => e.event)).toEqual(["theme.changed"])
@@ -85,11 +86,11 @@ test("snapshot race discards older state events, preserves transient delivery, a
     if (method !== "state.get") return {}
     current.theme = "light"
     feed.publish("theme.changed", { theme: "light" })
-    feed.publish("session.changed", { name: "a", title: "before watermark" })
+    feed.publish("session.changed", { sessionId: "00000000-0000-4000-8000-000000000001", name: "a", title: "before watermark" })
     const snapshot = feed.snapshot()
     current.theme = "dark"
     feed.publish("theme.changed", { theme: "dark" })
-    feed.publish("session.changed", { name: "a", title: "capture me" })
+    feed.publish("session.changed", { sessionId: "00000000-0000-4000-8000-000000000001", name: "a", title: "capture me" })
     return snapshot
   })
   const transient: EventFrame[] = []
@@ -124,18 +125,18 @@ test("snapshots are detached, filter independent, and bounded with explicit sour
 
 test("lifetime restart and generation replacement invalidate prior observation; removal is not reachability", () => {
   const current = status()
-  current.sessions = [{ name: "a", pid: 1, cwd: "/", argv: null, created_at: 1, title: "", cols: 80, rows: 24, shown: false, state: "live", labels: {} }]
+  current.apps = [{ name: "a", pty: "companion", whenHidden: "keep", visible: false, error: null, lastExit: null, session: { id: "00000000-0000-4000-8000-000000000001", pid: 1, created_at: 1, state: "live" }, cwd: "/", argv: null, created_at: 1, title: "", cols: 80, rows: 24, shown: false, state: "running", labels: {} }]
   const feed = new EventFeed(() => ({ state: current, availability: "ready", reason: null }), () => {})
   const other = new EventFeed(() => ({ state: current, availability: "ready", reason: null }), () => {})
   const observation = new EventObservation()
   const snapshot = feed.snapshot()
   observation.replace(snapshot)
   const ctx = { instanceId: snapshot.instanceId, generation: 1 as const, sequence: 1 }
-  observation.apply(eventFrame("session.state", { ...ctx, name: "a", state: "unreachable" }))
-  expect(observation.current?.state?.sessions).toHaveLength(1)
-  expect(observation.current?.state?.sessions[0]?.state).toBe("unreachable")
-  observation.apply(eventFrame("sessions.changed", { ...ctx, sequence: 2, sessions: [], availability: "ready", reason: null }))
-  expect(observation.current?.state?.sessions).toEqual([])
+  observation.apply(eventFrame("app.state", { ...ctx, app: { ...current.apps[0]!, state: "unreachable" } }))
+  expect(observation.current?.state?.apps).toHaveLength(1)
+  expect(observation.current?.state?.apps[0]?.state).toBe("unreachable")
+  observation.apply(eventFrame("apps.changed", { ...ctx, sequence: 2, apps: [], availability: "ready", reason: null }))
+  expect(observation.current?.state?.apps).toEqual([])
   observation.apply(eventFrame("theme.changed", { ...ctx, instanceId: other.snapshot().instanceId, sequence: 3, theme: "light" }))
   expect(observation.current).toBeNull()
   observation.replace(feed.snapshot())
@@ -150,9 +151,9 @@ test("wire validation rejects unknown envelope fields and invalid versions/IDs, 
   const lines = new LineBuffer(4 * 1024 * 1024)
   const socket = await Bun.connect({ unix: server.path, socket: { data: (_s, data) => lines.push(data, (line) => replies.push(JSON.parse(line))) } })
   cleanups.push(() => { socket.terminate() })
-  const base = { v: 1, type: "request", id: "a", method: "event.subscribe", params: {} }
+  const base = { v: 2, type: "request", id: "a", method: "event.subscribe", params: {} }
   socket.write(`${JSON.stringify(base)}\n`)
-  for (const extra of [{ surprise: true }, { v: 2 }, { id: "" }, { id: "x".repeat(129) }]) socket.write(`${JSON.stringify({ ...base, ...extra })}\n`)
+  for (const extra of [{ surprise: true }, { v: 1 }, { id: "" }, { id: "x".repeat(129) }]) socket.write(`${JSON.stringify({ ...base, ...extra })}\n`)
   socket.write(`${JSON.stringify({ ...base, id: "null", params: null })}\n`)
   await settle()
   expect(replies.map((reply) => reply.ok)).toEqual([true, false, false, false, false, true])
@@ -165,7 +166,7 @@ test("fragmented UTF-8 requests survive every split; an oversized line is correl
   const lines = new LineBuffer(4 * 1024 * 1024)
   const socket = await Bun.connect({ unix: server.path, socket: { data: (_s, data) => lines.push(data, (line) => replies.push(JSON.parse(line))) } })
   cleanups.push(() => { socket.terminate() })
-  const bytes = Buffer.from(`${JSON.stringify({ v: 1, type: "request", id: "unicode", method: "client.copy", params: { text: "é漢🙂" } })}\n`)
+  const bytes = Buffer.from(`${JSON.stringify({ v: 2, type: "request", id: "unicode", method: "client.copy", params: { text: "é漢🙂" } })}\n`)
   for (const byte of bytes) { socket.write(Uint8Array.of(byte)); await Bun.sleep(1) }
   await settle()
   expect(replies[0]).toMatchObject({ id: "unicode", ok: true, result: { text: "é漢🙂" } })
@@ -209,7 +210,7 @@ test("the 129th connection and 129th pending request are dropped without blockin
   let closed = false
   const raw = await Bun.connect({ unix: server.path, socket: { data: () => {}, close: () => { closed = true } } })
   cleanups.push(() => { raw.terminate() })
-  raw.write(Array.from({ length: 129 }, (_, i) => JSON.stringify({ v: 1, type: "request", id: String(i), method: "layout.get" }) + "\n").join(""))
+  raw.write(Array.from({ length: 129 }, (_, i) => JSON.stringify({ v: 2, type: "request", id: String(i), method: "layout.get" }) + "\n").join(""))
   await settle()
   expect(closed).toBe(true)
   release.resolve()
@@ -223,7 +224,7 @@ test("a slow subscriber is dropped without delaying a separately filtered observ
   await fast.request("event.subscribe", { events: ["theme.*"] })
   const slow = await connect(server)
   await slow.request("event.subscribe", { events: ["session.*"] })
-  const frame = eventFrame("session.changed", { ...context, name: "a", title: "x".repeat(40000) })
+  const frame = eventFrame("session.changed", { sessionId: "00000000-0000-4000-8000-000000000001", ...context, name: "a", title: "x".repeat(40000) })
   for (let i = 0; i < 4000 && server.subscribers > 1; i++) server.broadcast(frame)
   expect(server.subscribers).toBe(1)
   server.broadcast(eventFrame("theme.changed", { ...context, theme: "light" }))

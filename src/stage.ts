@@ -6,7 +6,7 @@ import {
   type FittedDivider,
   type FittedLayout,
   fitLayout,
-  layoutSessions,
+  layoutApps,
   paneGeometries,
   type Rect,
 } from "./layout.ts"
@@ -47,6 +47,7 @@ export class Stage {
   private tree: LayoutNode | null = null
   /** Bumped by every change to the tree, so a caller can refuse a stale write. */
   private treeRevision = 0
+  private visible: string[] = []
   private fitted: FittedLayout = { leaves: [], dividers: [] }
   /** Divider cells as joined glyphs, keyed `<x>,<y>`; rebuilt with the fit. */
   private glyphs = new Map<string, string>()
@@ -76,6 +77,7 @@ export class Stage {
   get view(): LayoutView {
     return {
       revision: this.treeRevision,
+      visible: [...this.visible],
       root: this.tree,
       focus: this.focusName,
       stage: this.size,
@@ -100,7 +102,7 @@ export class Stage {
   apply(
     root: LayoutNode | null,
     focus: string | null | undefined,
-    options: { revision?: number; cause?: "apply" | "drag" } = {},
+    options: { revision?: number; cause?: "apply" | "drag"; visible?: string[]; committed?: () => void } = {},
   ): LayoutView {
     if (options.revision !== undefined && options.revision !== this.treeRevision) {
       throw new ApiFailure(
@@ -108,6 +110,10 @@ export class Stage {
         `the Layout has moved on: revision ${this.treeRevision}, not ${options.revision}`,
       )
     }
+    const nextVisible = options.visible ?? this.visible
+    const named = layoutApps(root)
+    if (new Set(named).size !== named.length) throw new ApiFailure("invalid_params", "an App may appear in only one Pane")
+    if (options.visible && (new Set(nextVisible).size !== nextVisible.length || named.some((name) => !nextVisible.includes(name)))) throw new ApiFailure("invalid_params", "visible must be unique and include every App in the tree")
     const previousTree = this.tree
     const previousFocus = this.focusName
     this.tree = root
@@ -122,7 +128,9 @@ export class Stage {
       this.draw()
       throw error
     }
+    this.visible = [...nextVisible]
     this.treeRevision += 1
+    options.committed?.()
     this.onChanged(options.cause ?? "apply")
     return this.view
   }
@@ -164,18 +172,18 @@ export class Stage {
     const placed = new Set<string>()
     for (const leaf of this.fitted.leaves) {
       if (leaf.rect.cols <= 0 || leaf.rect.rows <= 0) continue
-      if ("session" in leaf.node) {
-        const terminal = this.panes.terminalFor(leaf.node.session)
+      if ("app" in leaf.node) {
+        const terminal = this.panes.terminalFor(leaf.node.app)
         // A Pane naming a Session that does not exist draws nothing; the
         // Layout stays as the caller wrote it, so creating that Session later
         // fills the Pane without another apply. A Session named twice has one
         // emulator, so only its first Pane draws it.
-        if (!terminal || placed.has(leaf.node.session)) continue
-        placed.add(leaf.node.session)
+        if (!terminal || placed.has(leaf.node.app)) continue
+        placed.add(leaf.node.app)
         if (terminal.parent !== this.root) this.root.add(terminal)
         placeAt(terminal, leaf.rect)
         terminal.visible = true
-        shown.push(leaf.node.session)
+        shown.push(leaf.node.app)
         continue
       }
       if ("text" in leaf.node) {
@@ -187,10 +195,10 @@ export class Stage {
     // Anything not in this Layout leaves the screen but keeps running: what
     // the last draw showed, plus anything this tree names but could not fit.
     const shownSet = new Set(shown)
-    for (const name of new Set([...this.shown, ...layoutSessions(this.tree)])) {
+    for (const name of new Set([...this.shown, ...layoutApps(this.tree)])) {
       if (shownSet.has(name)) continue
       const terminal = this.panes.terminalFor(name)
-      if (terminal) terminal.visible = false
+      if (terminal) { terminal.visible = false; if (terminal.focused) terminal.blur() }
     }
     for (const [path, pane] of this.textPanes) {
       if (liveText.has(path)) continue
@@ -278,9 +286,9 @@ export class Stage {
    * A Session named by more than one Pane is drawn by its first, so that is
    * the one a click lands on.
    */
-  paneOrigin(session: string): { x: number; y: number } | null {
+  paneOrigin(app: string): { x: number; y: number } | null {
     for (const leaf of this.fitted.leaves) {
-      if (!("session" in leaf.node) || leaf.node.session !== session) continue
+      if (!("app" in leaf.node) || leaf.node.app !== app) continue
       if (leaf.rect.cols > 0 && leaf.rect.rows > 0) return { x: leaf.rect.x, y: leaf.rect.y }
     }
     return null
@@ -306,7 +314,8 @@ export class Stage {
    */
   private applyFocus(): void {
     const focused = this.focusName !== null && this.shown.includes(this.focusName) ? this.focusName : null
-    if (focused === null) this.focusName = null
+    // Focus is a Layout intention, even before an App starts or while squeezed.
+    if (this.focusName !== null && !layoutApps(this.tree).includes(this.focusName)) this.focusName = null
     for (const name of this.shown) {
       const terminal = this.panes.terminalFor(name)
       if (!terminal) continue

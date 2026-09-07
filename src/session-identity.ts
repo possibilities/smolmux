@@ -1,4 +1,5 @@
-import { SESSION_NAME } from "./protocol.ts"
+import { randomUUID } from "node:crypto"
+import { APP_NAME, sessionViewSchema } from "./protocol.ts"
 import type { SessionEntry } from "./zmx-command.ts"
 
 /**
@@ -14,22 +15,24 @@ const RUNTIME_PREFIX = "smolmuxr"
 export const RUNTIME_KIND = "runtime"
 
 /** Labels a caller may not set: smolmux's own. */
-export const RESERVED_LABELS = ["owner", "instance", "session", "kind"] as const
+export const RESERVED_LABELS = ["owner", "instance", "app", "session", "kind"] as const
 
 export type SessionIdentity = {
   /** The caller's name, unique per Instance. */
   name: string
+  id: string
   /** The Companion session name. */
   companionName: string
   labels: Record<string, string>
 }
 
-export function sessionIdentity(instanceId: string, name: string, extra: Record<string, string> = {}): SessionIdentity {
-  if (!SESSION_NAME.test(name)) throw new Error(`invalid Session name: ${JSON.stringify(name)}`)
+export function sessionIdentity(instanceId: string, name: string, extra: Record<string, string> = {}, id: string = randomUUID()): SessionIdentity {
+  if (!APP_NAME.test(name)) throw new Error(`invalid App name: ${JSON.stringify(name)}`)
   return {
     name,
+    id,
     companionName: `${SESSION_PREFIX}-${instanceId}-${name}`,
-    labels: { ...extra, owner: OWNER_LABEL, instance: instanceId, session: name },
+    labels: { ...extra, owner: OWNER_LABEL, instance: instanceId, app: name, session: id },
   }
 }
 
@@ -43,15 +46,15 @@ export function runtimeLabels(instanceId: string): Record<string, string> {
 
 /** The Session name a live Companion session carries for this Instance, or null when it is not ours. */
 export function ownedSessionName(entry: SessionEntry, instanceId: string): string | null {
-  const { owner, instance, session, kind } = entry.labels
+  const { owner, instance, app, session, kind } = entry.labels
   if (owner !== OWNER_LABEL || instance !== instanceId || kind === RUNTIME_KIND) return null
-  if (typeof session !== "string" || !SESSION_NAME.test(session)) return null
-  if (entry.name !== `${SESSION_PREFIX}-${instanceId}-${session}`) return null
-  return session
+  if (typeof app !== "string" || !APP_NAME.test(app) || !sessionViewSchema.shape.id.safeParse(session).success) return null
+  if (entry.name !== `${SESSION_PREFIX}-${instanceId}-${app}`) return null
+  return app
 }
 
 /** A Companion name that is shaped like one of this Instance's Sessions, whether or not its labels can be read. */
 export function looksLikeOwnedSession(companionName: string, instanceId: string): boolean {
   const prefix = `${SESSION_PREFIX}-${instanceId}-`
-  return companionName.startsWith(prefix) && SESSION_NAME.test(companionName.slice(prefix.length))
+  return companionName.startsWith(prefix) && APP_NAME.test(companionName.slice(prefix.length))
 }

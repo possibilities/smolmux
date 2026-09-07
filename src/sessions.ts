@@ -2,7 +2,7 @@ import { type CliRenderer, MouseEvent, PasteEvent } from "@opentui/core"
 import { CursorReportAdapter } from "./cursor-report-adapter.ts"
 import type { FxnkThemeResolution } from "./host-palette.ts"
 import { PaneTerminalRenderable } from "./pane-terminal.ts"
-import { ApiFailure, type Capture, type InputEvent, type SessionView } from "./protocol.ts"
+import { ApiFailure, type Capture, type InputEvent, type PtyKind } from "./protocol.ts"
 import {
   isNamedKey,
   keyEventFor,
@@ -23,6 +23,7 @@ import {
   type SessionExit,
   type SessionTransport,
   type SessionTransportFactory,
+  type LocalProcessOwner,
   type TerminalSize,
 } from "./session-transport.ts"
 import { OscTitleParser, sanitizeTitle } from "./title-parser.ts"
@@ -43,7 +44,14 @@ const ADOPT_CONCURRENCY = 4
 /** Variables a child must never inherit from the Runtime that started it. */
 const PRIVATE_ENVIRONMENT = /^(?:SMOLMUX_|ZMX_|TMUX|HERDR_)/u
 
+export type ExecutionView = {
+  id: string; name: string; pty: PtyKind; pid: number | null; cwd: string; argv: string[] | null
+  created_at: number; title: string; cols: number; rows: number; shown: boolean
+  state: "live" | "paused" | "unreachable"; labels: Record<string, string>
+}
 export type SessionCreateRequest = {
+  pty?: PtyKind
+
   name: string
   argv: string[]
   cwd: string
@@ -56,16 +64,18 @@ export type SessionCreateRequest = {
 export type SessionsOptions = {
   renderer: CliRenderer
   instanceId: string
-  companion: CompanionCommand
-  transport: SessionTransportFactory
+  companion?: CompanionCommand
+  transport?: SessionTransportFactory
+  local?: LocalProcessOwner
+  resolveCompanion?: () => Promise<{ companion: CompanionCommand; transport: SessionTransportFactory }>
   theme: FxnkThemeResolution
   /** The Runtime's own environment; a child gets this with the private variables removed. */
   environment?: NodeJS.ProcessEnv
-  onExit: (name: string, exit: SessionExit) => void
+  onExit: (name: string, exit: SessionExit, sessionId: string) => void
   /** Debounced: output or a title reached this Session's screen. */
-  onChanged: (name: string, title: string) => void
+  onChanged: (name: string, title: string, sessionId: string) => void
   /** A Session's transport was lost or came back. */
-  onState: (name: string, state: "live" | "unreachable") => void
+  onState: (name: string, state: "live" | "paused" | "unreachable") => void
   /** A Session appeared, went away, or changed enough that the Layout must be re-applied. */
   onRoster: () => void
   /** Where a failure with no caller to tell goes; never the drawn screen. */
@@ -80,14 +90,14 @@ export type SessionsOptions = {
 class Session {
   readonly terminal: PaneTerminalRenderable
   title = ""
-  private currentState: "live" | "unreachable" = "live"
+  private currentState: "live" | "paused" | "unreachable" = "live"
 
   /** Reported wherever it is set, so a client never has to poll to learn it. */
-  get state(): "live" | "unreachable" {
+  get state(): "live" | "paused" | "unreachable" {
     return this.currentState
   }
 
-  set state(next: "live" | "unreachable") {
+  set state(next: "live" | "paused" | "unreachable") {
     if (next === this.currentState) return
     this.currentState = next
     this.events.onState(this, next)
@@ -97,6 +107,10 @@ class Session {
   argv: string[] | null = null
   labels: Record<string, string> = {}
   ended = false
+  inputBlocked = false
+  private replies: Uint8Array[] = []
+  private replyBytes = 0
+  readonly completion = Promise.withResolvers<SessionExit>()
 
   private transport: SessionTransport | null = null
   private detached = false
@@ -108,6 +122,7 @@ class Session {
   constructor(
     renderer: CliRenderer,
     readonly identity: SessionIdentity,
+    readonly pty: PtyKind,
     readonly cwd: string,
     readonly createdAt: number,
     private hostTheme: FxnkThemeResolution,
@@ -116,7 +131,7 @@ class Session {
       onChanged: (session: Session) => void
       onExit: (session: Session, exit: SessionExit) => void
       onLost: (session: Session, error: Error) => void
-      onState: (session: Session, state: "live" | "unreachable") => void
+      onState: (session: Session, state: "live" | "paused" | "unreachable") => void
     },
   ) {
     this.size = size
@@ -140,7 +155,18 @@ class Session {
       onData: (data, source) => {
         const transport = this.transport
         if (!transport || this.ended) return
-        transport.write(source === "response" ? this.cursorReportAdapter.toPty(data) : data)
+        const bytes = source === "response" ? this.cursorReportAdapter.toPty(data) : data
+        if (this.inputBlocked || this.state === "paused") {
+          if (source === "response") {
+            if (this.replies.length >= 4096 || this.replyBytes + bytes.length > 32 * 1024 * 1024) {
+              this.events.onLost(this, new Error("paused terminal reply queue exceeded its bound"))
+              return
+            }
+            this.replies.push(Uint8Array.from(bytes)); this.replyBytes += bytes.length
+          }
+          return
+        }
+        transport.write(bytes)
       },
       onTerminalResize: (cols, rows) => {
         this.size = { cols: Math.max(1, cols), rows: Math.max(1, rows) }
@@ -148,6 +174,13 @@ class Session {
       },
     })
     this.terminal.applyHostTheme(hostTheme)
+  }
+
+  resumeInput(): void {
+    const replies = this.replies
+    this.replies = []; this.replyBytes = 0
+    for (const bytes of replies) this.transport?.write(bytes)
+    this.inputBlocked = false
   }
 
   /**
@@ -177,6 +210,7 @@ class Session {
     }
     this.transport?.detach()
     this.transport = transport
+    this.pid = transport.pid ?? this.pid
     this.state = "live"
     transport.bind({
       output: (bytes) => this.acceptOutput(bytes),
@@ -192,7 +226,7 @@ class Session {
     // The transport was opened at the size the emulator had when it was asked
     // for; the layout pass has usually run since, and its resize found no
     // transport to tell. A size that has not changed is a no-op at the PTY.
-    transport.resize(this.currentSize)
+    if (!this.detached && !this.ended && this.transport === transport) transport.resize(this.currentSize)
   }
 
   updateHostTheme(resolution: FxnkThemeResolution): void {
@@ -209,6 +243,7 @@ class Session {
 
   detach(): void {
     this.detached = true
+    this.replies = []; this.replyBytes = 0
     this.transport?.detach()
     this.transport = null
   }
@@ -218,13 +253,14 @@ class Session {
     const screen = this.terminal.captureScreen(size.cols, size.rows, scrollback)
     return {
       name: this.identity.name,
+      sessionId: this.identity.id,
       lines: screen.lines,
       screen_start: screen.screenStart,
       cols: screen.columns,
       rows: screen.rows,
       cursor: { x: screen.cursor.x, y: screen.cursor.y, visible: screen.cursor.visible },
       title: this.title,
-      state: this.state,
+      state: this.state === "live" ? "running" : this.state,
     }
   }
 
@@ -247,7 +283,7 @@ class Session {
     // far would answer success for bytes that went nowhere. A caller cannot
     // preflight this with session.list either: the transport can drop between
     // the two calls, and only here are the check and the write together.
-    if (this.transport === null || this.ended) {
+    if (this.transport === null || this.ended || this.inputBlocked || this.state === "paused") {
       throw new ApiFailure(
         "conflict",
         `Session ${this.identity.name} is ${this.ended ? "gone" : "unreachable"}: input would be dropped rather than delivered`,
@@ -285,9 +321,11 @@ class Session {
     }
   }
 
-  view(shown: boolean): SessionView {
+  view(shown: boolean): ExecutionView {
     const size = this.currentSize
     return {
+      id: this.identity.id,
+      pty: this.pty,
       name: this.identity.name,
       pid: this.pid,
       cwd: this.cwd,
@@ -329,6 +367,7 @@ class Session {
     this.ended = true
     this.transport?.detach()
     this.transport = null
+    this.completion.resolve(status)
     this.events.onExit(this, status)
   }
 }
@@ -340,12 +379,14 @@ class Session {
  */
 export class Sessions {
   private readonly sessions = new Map<string, Session>()
+  private readonly pendingRelease = new Map<string, SessionIdentity>()
   private readonly changeTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private theme: FxnkThemeResolution
   private shuttingDown = false
   /** Session names in a Pane of the current Layout. */
   private shownNames = new Set<string>()
   private creationTail: Promise<unknown> = Promise.resolve()
+  private companionPromise: Promise<{ companion: CompanionCommand; transport: SessionTransportFactory }> | null = null
 
   constructor(private readonly options: SessionsOptions) {
     this.theme = options.theme
@@ -366,13 +407,13 @@ export class Sessions {
     }
   }
 
-  list(): SessionView[] {
+  list(): ExecutionView[] {
     return [...this.sessions.values()]
       .sort((left, right) => left.createdAt - right.createdAt)
       .map((session) => session.view(this.shownNames.has(session.identity.name)))
   }
 
-  view(name: string): SessionView {
+  view(name: string): ExecutionView {
     return this.require(name).view(this.shownNames.has(name))
   }
 
@@ -395,13 +436,17 @@ export class Sessions {
    * so they are the record: nothing of smolmux's own has to survive a crash.
    */
   async adopt(): Promise<{ adopted: number; unresolved: string[] }> {
-    const entries = await this.options.companion.list()
+    const { companion, transport: companionTransport } = await this.companionPair()
+    if (this.shuttingDown) return { adopted: 0, unresolved: [] }
+    const entries = await companion.list()
+    if (this.shuttingDown) return { adopted: 0, unresolved: [] }
     const unresolved: string[] = []
     const live: { name: string; entry: (typeof entries)[number] }[] = []
     for (const entry of entries) {
       if (entry.state === "exited") {
         if (looksLikeOwnedSession(entry.name, this.options.instanceId)) {
-          await this.options.companion.forget(entry.name).catch(() => {})
+          await companion.forget(entry.name).catch((error) => this.options.report?.(`forgetting ${entry.name}: ${String(error)}`))
+          if (this.shuttingDown) return { adopted: 0, unresolved: [] }
         }
         continue
       }
@@ -416,8 +461,8 @@ export class Sessions {
 
     live.sort((left, right) => (left.entry.createdAt ?? 0) - (right.entry.createdAt ?? 0))
     const prepared = live.map(({ name, entry }) => {
-      const identity = sessionIdentity(this.options.instanceId, name, callerLabels(entry.labels))
-      const session = this.add(identity, entry.cwd ?? "/", entry.createdAt ?? Date.now(), DEFAULT_SIZE)
+      const identity = sessionIdentity(this.options.instanceId, name, callerLabels(entry.labels), entry.labels.session)
+      const session = this.add(identity, entry.cwd ?? "/", entry.createdAt ?? Date.now(), DEFAULT_SIZE, "companion")
       session.pid = entry.pid
       session.labels = { ...entry.labels }
       // An adopted Session's argv is not recoverable: the Companion reports a
@@ -431,8 +476,8 @@ export class Sessions {
     await forEachConcurrent(prepared, ADOPT_CONCURRENCY, async ({ session, endpoint }) => {
       if (this.shuttingDown) return
       try {
-        const transport = await this.options.transport.attach(session.identity, session.currentSize, endpoint)
-        if (this.shuttingDown || !this.sessions.has(session.identity.name)) {
+        const transport = await companionTransport.attach(session.identity, session.currentSize, endpoint)
+        if (this.shuttingDown || this.sessions.get(session.identity.name) !== session) {
           transport.detach()
           return
         }
@@ -455,7 +500,7 @@ export class Sessions {
    * Start a Session. Creation is serialized so two callers cannot claim the
    * same name, and the Companion arbitrates the rest.
    */
-  create(request: SessionCreateRequest): Promise<SessionView> {
+  create(request: SessionCreateRequest): Promise<ExecutionView> {
     const run = () => this.createOne(request)
     const result = this.creationTail.then(run, run)
     this.creationTail = result.then(
@@ -465,7 +510,7 @@ export class Sessions {
     return result
   }
 
-  private async createOne(request: SessionCreateRequest): Promise<SessionView> {
+  private async createOne(request: SessionCreateRequest): Promise<ExecutionView> {
     if (this.shuttingDown) throw new ApiFailure("conflict", "smolmux is shutting down")
     if (this.sessions.has(request.name)) {
       throw new ApiFailure("conflict", `a Session named ${request.name} already exists`)
@@ -475,24 +520,31 @@ export class Sessions {
         throw new ApiFailure("invalid_params", `label ${key} is smolmux's own`)
       }
     }
+    await this.settle(request.name)
+    if (this.shuttingDown) throw new ApiFailure("conflict", "smolmux is shutting down")
     const identity = sessionIdentity(this.options.instanceId, request.name, request.labels)
     const size: TerminalSize = {
       cols: request.cols ?? DEFAULT_SIZE.cols,
       rows: request.rows ?? DEFAULT_SIZE.rows,
     }
-    const session = this.add(identity, request.cwd, Date.now(), size)
+    const session = this.add(identity, request.cwd, Date.now(), size, request.pty ?? "companion")
     session.labels = { ...identity.labels }
     session.argv = [...request.argv]
+    let started = false
     try {
-      const transport = await this.options.transport.start({
+      const factory = await this.factory(session.pty)
+      if (this.shuttingDown) throw new ApiFailure("conflict", "smolmux is shutting down")
+      const transport = await factory.start({
         identity,
         command: request.argv,
         cwd: request.cwd,
         env: childEnvironment(this.options.environment ?? process.env, request.env),
         size,
       })
+      started = true
       if (this.shuttingDown || !this.sessions.has(identity.name)) {
         transport.detach()
+        await this.terminateProcess(session)
         throw new ApiFailure("conflict", "smolmux is shutting down")
       }
       session.adopt(transport)
@@ -505,8 +557,11 @@ export class Sessions {
         this.options.onRoster()
         return session.view(false)
       }
-      this.dropQuietly(session)
-      throw companionFailure(error)
+      if (started && this.sessions.get(identity.name) === session) {
+        session.state = "unreachable"
+        this.options.onRoster()
+      } else if (!started) this.dropQuietly(session)
+      throw session.pty === "local" && !(error instanceof ApiFailure) ? new ApiFailure("process_error", error instanceof Error ? error.message : String(error)) : companionFailure(error)
     }
     this.options.onRoster()
     return session.view(this.shownNames.has(identity.name))
@@ -514,32 +569,88 @@ export class Sessions {
 
   async kill(name: string): Promise<void> {
     const session = this.require(name)
-    try {
-      await this.options.companion.kill(session.identity.companionName)
-    } catch (error) {
-      throw companionFailure(error)
+    session.inputBlocked = true
+    try { await this.terminateProcess(session) }
+    catch (error) {
+      if (this.sessions.get(name) === session) session.resumeInput()
+      throw error
+    }
+    // The owner has confirmed termination; a lost terminal transport cannot
+    // turn it into an immortal unreachable entry.
+    if (this.sessions.get(name) === session) this.remove(session, { code: null, signal: null, reason: "requested" })
+  }
+
+  async pause(name: string, paused: boolean): Promise<void> {
+    const session = this.require(name)
+    if (session.pty !== "local" || !this.options.local) throw new ApiFailure("unsupported", "only local Sessions can pause")
+    session.inputBlocked = true
+    await this.options.local.pause(session.identity, paused)
+    if (this.sessions.get(name) === session) {
+      session.state = paused ? "paused" : "live"
+      if (!paused) session.resumeInput()
     }
   }
 
-  /** Every Session ends; used by `instance.stop`. */
-  /**
-   * End every Session, and name the ones that would not go. A swallowed
-   * failure here is a process nothing is managing any more: the Runtime that
-   * held it exits, its Companion session stays live and labelled, and the
-   * caller was told the Instance stopped.
-   */
-  async killAll(): Promise<string[]> {
+  async killAll(localOnly = false): Promise<string[]> {
+    await this.creationTail
     const survived: string[] = []
-    await Promise.all(
-      [...this.sessions.values()].map(async (session) => {
-        try {
-          await this.options.companion.kill(session.identity.companionName)
-        } catch {
-          survived.push(session.identity.name)
-        }
-      }),
-    )
+    await Promise.all([...this.sessions.values()].filter((s) => !localOnly || s.pty === "local").map(async (session) => {
+      try { await this.kill(session.identity.name) }
+      catch { survived.push(session.identity.name) }
+    }))
     return survived.sort()
+  }
+
+  private async terminateProcess(session: Session): Promise<void> {
+    if (session.pty === "local") {
+      if (!this.options.local) throw new ApiFailure("unsupported", "local PTYs are unavailable")
+      const status = await this.options.local.terminate(session.identity)
+      if (this.sessions.get(session.identity.name) === session) this.remove(session, status)
+    } else {
+      const { companion } = await this.companionPair()
+      try { await companion.kill(session.identity.companionName) }
+      catch (error) {
+        const entry = await companion.inspect(session.identity.companionName)
+        if (entry.state !== "exited" && entry.state !== "absent") throw error
+      }
+      const entry = await this.waitForRelease(session.identity)
+      if (this.sessions.get(session.identity.name) === session) this.remove(session, entry.exit ?? { code: null, signal: null, reason: "requested" })
+      this.pendingRelease.delete(session.identity.name)
+    }
+  }
+
+  /** Exit precedes Companion reap/unlink; keep that release barrier after the emulator is gone. */
+  async settle(name: string): Promise<void> {
+    const identity = this.pendingRelease.get(name)
+    if (!identity) return
+    await this.waitForRelease(identity)
+    if (this.pendingRelease.get(name) === identity) this.pendingRelease.delete(name)
+  }
+
+  private async waitForRelease(identity: SessionIdentity) {
+    const { companion } = await this.companionPair()
+    const deadline = Date.now() + 5000
+    for (;;) {
+      const entry = await companion.inspect(identity.companionName)
+      if (entry.state === "exited" || entry.state === "absent") return entry
+      if (Date.now() >= deadline) throw new ApiFailure("companion_error", `Companion did not confirm termination of ${identity.name}`)
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+
+  private async factory(pty: PtyKind): Promise<SessionTransportFactory> {
+    if (pty === "local") {
+      if (!this.options.local) throw new ApiFailure("unsupported", "local PTYs are unavailable")
+      return this.options.local
+    }
+    return (await this.companionPair()).transport
+  }
+
+  private companionPair(): Promise<{ companion: CompanionCommand; transport: SessionTransportFactory }> {
+    if (this.options.companion && this.options.transport) return Promise.resolve({ companion: this.options.companion, transport: this.options.transport })
+    if (!this.options.resolveCompanion) return Promise.reject(new ApiFailure("unsupported", "Companion PTYs are unavailable"))
+    this.companionPromise ??= this.options.resolveCompanion().catch((error) => { this.companionPromise = null; throw error })
+    return this.companionPromise
   }
 
   /**
@@ -565,8 +676,8 @@ export class Sessions {
     this.sessions.clear()
   }
 
-  private add(identity: SessionIdentity, cwd: string, createdAt: number, size: TerminalSize): Session {
-    const session = new Session(this.options.renderer, identity, cwd, createdAt, this.theme, size, {
+  private add(identity: SessionIdentity, cwd: string, createdAt: number, size: TerminalSize, pty: PtyKind): Session {
+    const session = new Session(this.options.renderer, identity, pty, cwd, createdAt, this.theme, size, {
       onChanged: (changed) => this.noteChange(changed),
       onExit: (ended, status) => this.remove(ended, status),
       onLost: (lost, error) => this.reportFailure(this.recover(lost, error), `recovering ${lost.identity.name}`),
@@ -586,12 +697,14 @@ export class Sessions {
 
   private remove(session: Session, exit: SessionExit): void {
     const name = session.identity.name
-    if (!this.sessions.delete(name)) return
+    if (this.sessions.get(name) !== session) return
+    this.sessions.delete(name)
+    if (session.pty === "companion") this.pendingRelease.set(name, session.identity)
+    session.completion.resolve(exit)
     this.clearChangeTimer(name)
     session.destroy()
-    if (this.shuttingDown) return
-    this.options.onExit(name, exit)
-    this.options.onRoster()
+    this.options.onExit(name, exit, session.identity.id)
+    if (!this.shuttingDown) this.options.onRoster()
   }
 
   /**
@@ -602,12 +715,16 @@ export class Sessions {
    * start's adoption will find it.
    */
   private async recover(session: Session, lost: Error): Promise<void> {
+    if (session.pty === "local") {
+      await this.terminateProcess(session)
+      return
+    }
     for (let attempt = 0; attempt < RECOVERY_ATTEMPTS; attempt += 1) {
       if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, RECOVERY_INTERVAL_MS))
-      if (this.shuttingDown || !this.sessions.has(session.identity.name)) return
+      if (this.shuttingDown || this.sessions.get(session.identity.name) !== session) return
       try {
-        const transport = await this.options.transport.attach(session.identity, session.currentSize)
-        if (this.shuttingDown || !this.sessions.has(session.identity.name)) {
+        const transport = await (await this.factory(session.pty)).attach(session.identity, session.currentSize)
+        if (this.shuttingDown || this.sessions.get(session.identity.name) !== session) {
           transport.detach()
           return
         }
@@ -621,7 +738,7 @@ export class Sessions {
         }
       }
     }
-    if (this.shuttingDown || !this.sessions.has(session.identity.name)) return
+    if (this.shuttingDown || this.sessions.get(session.identity.name) !== session) return
     session.state = "unreachable"
     this.options.onRoster()
     this.options.report?.(`session ${session.identity.name} is unreachable: ${lost.message}`)
@@ -636,8 +753,8 @@ export class Sessions {
     if (this.shuttingDown || this.changeTimers.has(name)) return
     const timer = setTimeout(() => {
       this.changeTimers.delete(name)
-      if (this.shuttingDown || !this.sessions.has(name)) return
-      this.options.onChanged(name, session.title)
+      if (this.shuttingDown || this.sessions.get(name) !== session) return
+      this.options.onChanged(name, session.title, session.identity.id)
     }, CHANGE_DEBOUNCE_MS)
     // A pending change must never hold the process open.
     timer.unref?.()

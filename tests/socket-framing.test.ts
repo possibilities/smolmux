@@ -63,7 +63,7 @@ test("partial writes and drain preserve large Unicode requests in order", async 
     expect(lines.map((frame) => frame.params.payload)).toEqual([payload, "café"])
     const reply = Buffer.from(
       lines
-        .map((frame) => JSON.stringify({ v: 1, type: "response", id: frame.id, ok: true, result: "猫 café" }) + "\n")
+        .map((frame) => JSON.stringify({ v: 2, type: "response", id: frame.id, ok: true, result: "猫 café" }) + "\n")
         .join(""),
     )
     for (const byte of reply) seam.data(Buffer.from([byte]))
@@ -88,8 +88,8 @@ test("explicit close and deadlines settle pending calls", async () => {
 test("malformed responses and uncorrelated refusals settle every pending call", async () => {
   for (const frame of [
     null,
-    { v: 1, type: "response", id: "1", ok: false },
-    { v: 1, type: "response", id: null, ok: false, error: { code: "invalid_request", message: "uncorrelated" } },
+    { v: 2, type: "response", id: "1", ok: false },
+    { v: 2, type: "response", id: null, ok: false, error: { code: "invalid_request", message: "uncorrelated" } },
   ]) {
     const { client, seam } = driven()
     seam.socket = { write: (bytes) => bytes.length, terminate() {} }

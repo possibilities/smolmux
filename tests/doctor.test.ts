@@ -30,7 +30,7 @@ test("doctor reports the pinned pair and the Instance it would start", async () 
   try {
     const companion = await fakeCompanion(root, COMPANION_PIN.build)
     const directory = join(root, "zmx")
-    const env = { PATH: root, SMOLMUX_ZMX_DIR: directory, XDG_CONFIG_HOME: join(root, "config") }
+    const env = { SMOLMUX_LOCAL_PTY_PATH: companion, PATH: root, SMOLMUX_ZMX_DIR: directory, XDG_CONFIG_HOME: join(root, "config") }
 
     const report = await doctor(env)
     expect(report.ok).toBe(true)
@@ -78,7 +78,7 @@ test("a Companion that is not the pinned build fails the report unless it is the
   const root = await realpath(await mkdtemp("/tmp/smolmux-doctor-pin-"))
   try {
     const companion = await fakeCompanion(root, "0.0.0+smolmux.deadbeefcafe")
-    const shared = { SMOLMUX_ZMX_DIR: join(root, "zmx"), XDG_CONFIG_HOME: join(root, "config") }
+    const shared = { SMOLMUX_LOCAL_PTY_PATH: companion, SMOLMUX_ZMX_DIR: join(root, "zmx"), XDG_CONFIG_HOME: join(root, "config") }
 
     const onPath = await doctor({ ...shared, PATH: root })
     expect(onPath.ok).toBe(false)

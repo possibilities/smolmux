@@ -1,10 +1,10 @@
 # smolmux agent notes
 
 - smolmux is a terminal multiplexer driven over a socket. It starts arbitrary
-  commands in Companion-held PTYs, draws them in a Layout a caller applies,
+  Apps in Companion-held or Runtime-owned local PTYs, draws them in a Layout a caller applies,
   and reports what changed. It knows nothing about what a Session runs — no
-  agent, harness, lifecycle, or model concept lives here, and none may be
-  added. A program that needs those reads screens through `session.capture`
+  agent, harness, task lifecycle, or model concept lives here, and none may be
+  added. Generic App ownership and hidden policies belong here. A program that needs those reads screens through `app.capture`
   and owns them itself.
 - `CONTEXT.md` is the glossary; use its terms in code, docs, and commits.
   `docs/adr/` holds the decisions, and a superseded record keeps the words it
@@ -40,7 +40,7 @@
   renderable from the layout pass, so a Pane that has never been drawn
   reports one cell, and a transport opened at that size would tell its PTY
   the screen is 1×1.
-- `session.capture` composes the emulator into a buffer of smolmux's own
+- `app.capture` composes the emulator into a buffer of smolmux's own
   (`PaneTerminalRenderable.captureScreen`). OpenTUI's `screen()` reads the
   frame buffer a render pass fills, which a hidden Pane never gets, and
   `onScreenChange` fires per rendered frame and only while visible — neither
@@ -54,7 +54,7 @@
 - A Restore costs about one screenful of history, measured exactly `rows` at
   the current pin: the Companion clears the screen between replaying
   scrollback and redrawing the viewport, so the lines just above the viewport
-  go. The viewport itself always survives. It bounds what `session.capture`
+  go. The viewport itself always survives. It bounds what `app.capture`
   can ever read back for a Session that has reattached, and
   `tests/companion-transport.test.ts` asserts the bound rather than the
   number so a Companion that fixes it still passes.
@@ -64,7 +64,7 @@
   be drawn at the wrong scroll position. The restore scrolls down by exactly
   what went up, because both ends clamp.
 - Until a caller applies a Layout, the one on screen is the Runtime's own and
-  follows the roster: the first Session, or the empty state when there are
+  follows the roster: the first App, or the empty state when there are
   none. The first `layout.apply` takes ownership and the Runtime never
   composes another. Without this a human attaching to an Instance nobody has
   arranged reads "no sessions" while three are running.
@@ -114,10 +114,12 @@
   and a test run would fight the operator's own smolmux over one socket.
 - An adopted Session's `argv` is null. The Companion reports a shell-quoted
   display string cut at 256 bytes; it is for reading, never for re-running.
-- The Runtime is headless. It renders into its Companion PTY and holds its
-  Sessions with no terminal attached, and ends only on `instance.stop`, a
-  signal, or a crash — never because the last Client left. Do not restore the
-  `--exit-on-last-client` lifecycle or a bootstrap marker.
+- A headless Runtime renders into its Companion PTY with no terminal attached
+  and never ends because the last Client left. A foreground Runtime renders
+  directly into its sole terminal, with the same validated socket API, and needs
+  no Companion for local Apps. Foreground terminal loss/signals kill locals and
+  release Companion Sessions; instance.stop confirms termination of both owners.
+  Do not restore --exit-on-last-client or a bootstrap marker.
 - Theme: a headless Runtime asks nothing (`resolveFxnkTheme` with a zero
   timeout takes `SMOLMUX_THEME`, then `COLORFGBG`, then dark), and the first
   Client samples its own terminal before relaying anything, then sends the
@@ -146,11 +148,12 @@
   physical terminal connection. Detaching never ends a Session or the
   Runtime.
 - Everything that carries a Session's terminal goes through
-  `SessionTransport` (`src/session-transport.ts`), and the one implementation
-  in `src/` is the Companion's. The Bun PTY behind the same seam lives in
-  `tests/fixtures/pty-transport.ts` so the Runtime suites run without a
-  Companion — keep it a fixture; a second production transport is what the
-  seam exists to prevent.
+  `SessionTransport` (`src/session-transport.ts`). Companion and local transports
+  carry terminal bytes; Apps own policy and Sessions own one execution/emulator.
+  The local helper has inherited pipes, no socket or service, and owns the command's
+  POSIX session, including shell job-control groups. Its liveness descriptor ends
+  locals on Runtime SIGKILL even while paused. Never signal outside managed scope.
+  The Bun PTY fixture remains test-only.
 - A lost transport is not an exit. `Sessions.recover` re-attaches a live
   session (replaying onto the reset emulator), removes one that ended exactly
   as an Exit would, and leaves one it cannot reach after a few tries in the
@@ -167,7 +170,7 @@
   OpenTUI installs an `unhandledRejection` handler that is `console.error`,
   so a rejection nobody catches is a stack trace across the alternate screen.
 - `instance.stop` seals the roster synchronously before it kills anything.
-  Without that a `session.create` already queued behind another one starts its
+  Without that an `app.create` already queued behind another one starts its
   process after the kills went out, is never killed, and reappears on the next
   start because labels are the record.
 - `Runtime.start` re-checks `shuttingDown` after every await. A signal during
@@ -238,5 +241,28 @@
   connection-local literal filters; `state.get` reads the complete projection
   synchronously with its publication watermark. `session.changed` and
   `session.exited` are transient notifications and never discarded by snapshot
-  watermarks. `sessions.changed` owns roster replacement/removal. Generate
+  watermarks. `apps.changed` owns declaration roster replacement/removal. Generate
   `events.schema.json` from `src/event-schema.ts` whenever the contract changes.
+
+- App declarations outlive natural exits within a Runtime. Session UUIDs change
+  on every fresh execution; exit/change notifications carry the UUID and App name.
+  Natural exit never automatically restarts an App. Intentional exit cause is
+  hidden/remove/restart/shutdown. Adoption reconstructs only surviving Companion
+  Apps; strip reserved labels and never reconstruct argv/env from display strings.
+- Layout visible is the complete logical set, distinct from fitted shown. Every
+  App leaf must be visible and unique. Squeezing, dragging and physical resize do
+  not run hidden policies. Commit the drawable Layout before scheduling policies.
+  Requested Focus survives a leaf awaiting execution or squeezed off-screen.
+- Per-App work serializes create/restart/remove/visibility transitions. Stop frees
+  emulator/history; pause retains them and rejects user input until resumed.
+  Terminal replies generated during suspension are bounded and resume afterwards;
+  user input is never replayed. local/stop and local/pause initially hidden defer
+  startup. Companion Apps require keep. Failed launches remain declared as failed.
+- Companion kill ACK is not completion. Confirm exit/absence before replacement
+  can reuse the deterministic Companion name. Preserve the release barrier after
+  Exit removes the emulator, and retain a successfully started execution when
+  shutdown termination fails. Cleanup detaches terminal consumers
+  and destroys Stage even when process termination reports failure.
+- USAGE.md is the agent-facing workflow guide. Update it, docs/api.md, generated
+  events.schema.json and the relevant examples whenever behavior changes. README
+  stays a short entry point. New APIs must ship with meaningful policy/race tests.

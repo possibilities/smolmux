@@ -135,7 +135,7 @@ test.skipIf(!ENABLED)("start creates a labelled session, attaches with a restore
   expect(watcher.restores).toBe(1)
   const session = await companion.inspect(identity.companionName)
   expect(session.state).toBe("live")
-  expect(session.labels).toEqual({ role: "list", owner: "smolmux", instance: INSTANCE, session: "one" })
+  expect(session.labels).toEqual({ role: "list", owner: "smolmux", instance: INSTANCE, app: "one", session: identity.id })
   expect(session.clients).toBe(1)
 
   transport.write(new TextEncoder().encode("hello\n"))
@@ -230,7 +230,7 @@ test.skipIf(!ENABLED)("a session under our name that is not ours is left alone",
 
 test.skipIf(!ENABLED)("a reattach keeps the visible screen exactly, and loses at most one screenful of history", async () => {
   // What a Restore replays is what a Session's history can ever hold, and
-  // `session.capture`'s scrollback reads that same emulator. The Companion's
+  // `app.capture`'s scrollback reads that same emulator. The Companion's
   // restore serializer clears the visible screen between the scrollback pass
   // and the viewport, which costs the screenful just above the viewport;
   // measured at the pinned build as exactly `rows` lines. Asserting a bound

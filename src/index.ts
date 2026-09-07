@@ -1,26 +1,19 @@
 #!/usr/bin/env bun
+import { runHeadless, startForeground } from "./host.ts"
 
-import { CliRenderer } from "@opentui/core"
+import { instanceLogger, instanceLogPathFor } from "./instance-log.ts"
+
+let headlessInstance: string | null = null
+
 import { homedir } from "node:os"
 import { ApiClient } from "./api-client.ts"
-import { ApiServer, apiSocketPathFor, InstanceActiveError } from "./api-server.ts"
+import { apiSocketPathFor, InstanceActiveError } from "./api-server.ts"
 import { type CliOptions, parseArgs, usage, VERSION } from "./cli.ts"
-import { setListenerErrorHandler } from "./companion-client.ts"
-import { CompanionTransportFactory } from "./companion-transport.ts"
 import { loadConfig } from "./config.ts"
 import { discoverEventSocket } from "./event-discovery.ts"
 import { doctor } from "./doctor.ts"
-import {
-  FxnkThemeMonitor,
-  type FxnkThemeResolution,
-  resolveFxnkTheme,
-} from "./host-palette.ts"
-import { instanceLogger, instanceLogPathFor } from "./instance-log.ts"
 import { type Instance, resolveInstance } from "./instance.ts"
-import { HOST_KEYBOARD_PROTOCOL } from "./pane-terminal.ts"
-import { ensurePrivateDirectories } from "./private-directory.ts"
-import { ApiFailure, contractDocument, type EventName, eventFrame, type Method } from "./protocol.ts"
-import { Runtime } from "./runtime.ts"
+import { contractDocument } from "./protocol.ts"
 import {
   currentRuntimeCommand,
   ensureRuntimeSession,
@@ -29,11 +22,6 @@ import {
 } from "./runtime-session.ts"
 import { stringEnvironment } from "./session-transport.ts"
 import { concealClientCursor, revealClientCursor, runTerminalClient } from "./terminal-client.ts"
-import {
-  beginSynchronizedFrame,
-  beginSynchronizedResizeClear,
-  endSynchronizedFrame,
-} from "./unused-space.ts"
 import { CompanionCommand } from "./zmx-command.ts"
 import { PROTOCOL_VERSION } from "./zmx-protocol.ts"
 import {
@@ -43,7 +31,6 @@ import {
   companionDirectory,
   companionMismatch,
   ensureCompanionDirectories,
-  privateRootDirectory,
   resolveCompanion,
 } from "./zmx-environment.ts"
 
@@ -75,13 +62,14 @@ async function main(): Promise<void> {
       process.stdout.write(`${JSON.stringify(contractDocument(), null, 2)}\n`)
       return
     case "doctor": {
-      const report = await doctor(process.env, instance)
+      const report = await doctor(process.env, instance, options.localOnly)
       process.stdout.write(`${report.lines.join("\n")}\n`)
       process.exitCode = report.ok ? 0 : 1
       return
     }
     case "runtime":
-      await runRuntime(instance)
+      headlessInstance = instance.id
+      await runHeadless(instance)
       return
     case "status":
       await printStatus(instance)
@@ -90,7 +78,8 @@ async function main(): Promise<void> {
       await stopInstance(instance)
       return
     case "start":
-      await startInstance(instance, true)
+      if (options.foreground) { const host = await startForeground({ name: options.name }); await host.closed }
+      else await startInstance(instance, true)
       return
     case "attach":
       await attachClient(instance, false)
@@ -103,156 +92,14 @@ async function main(): Promise<void> {
 
 /* ----------------------------------------------------------------- runtime */
 
-async function runRuntime(instance: Instance): Promise<void> {
-  const loadedConfig = await loadConfig(instance.configPath)
-  for (const diagnostic of loadedConfig.diagnostics) process.stderr.write(`smolmux: ${diagnostic}\n`)
-
-  const socketPath = apiSocketPathFor(instance.id)
-  const report = instanceLogger(instanceLogPathFor(instance.id))
-  // The Companion's listener failures would otherwise reach console.error,
-  // which for a headless Runtime is the screen.
-  setListenerErrorHandler((error) => report(`companion listener failed: ${errorMessage(error)}`))
-  const companionPath = await resolveCompanion()
-
-  let renderer: CliRenderer | null = null
-  let themeMonitor: FxnkThemeMonitor | null = null
-  let runtime: Runtime | null = null
-  let apiServer: ApiServer | null = null
-  let transport: CompanionTransportFactory | null = null
-  let resizeHandler: (() => void) | null = null
-  let theme: FxnkThemeResolution | null = null
-  const signalHandlers = new Map<NodeJS.Signals, () => void>()
-  const ready = Promise.withResolvers<void>()
-  // A request that arrives while Sessions are still being adopted waits for
-  // them rather than being told they do not exist.
-  ready.promise.catch(() => {})
-
-  try {
-    // smolmux's own files live in a directory only this user can reach, created
-    // and checked before anything is bound into it: a socket in a
-    // world-writable place can be taken by whoever gets there first once the
-    // Runtime that held it exits and unlinks it.
-    await ensurePrivateDirectories([privateRootDirectory()], "smolmux")
-    await ensureCompanionDirectories(companionDirectories())
-    const build = await companionBuild(companionPath.path)
-    if (build !== COMPANION_PIN.build) {
-      const message = companionMismatch(companionPath, build, PROTOCOL_VERSION)
-      if (companionPath.origin !== "override") throw new Error(message)
-      process.stderr.write(`smolmux: ${message}\n`)
-    }
-    const companion = new CompanionCommand(companionDirectory(), process.env, companionPath.path)
-
-    const createdRenderer = new CliRenderer(
-      process.stdin,
-      process.stdout,
-      process.stdout.columns || 80,
-      process.stdout.rows || 24,
-      { exitOnCtrlC: false, exitSignals: [], useKittyKeyboard: HOST_KEYBOARD_PROTOCOL },
-    )
-    renderer = createdRenderer
-    const themePort = {
-      write: (sequence: string) => process.stdout.write(sequence),
-      subscribeOsc: (handler: (sequence: string) => void) => createdRenderer.subscribeOsc(handler),
-      prependInputHandler: (handler: (sequence: string) => boolean) => createdRenderer.prependInputHandler(handler),
-      removeInputHandler: (handler: (sequence: string) => boolean) => createdRenderer.removeInputHandler(handler),
-    }
-    // The Runtime starts with no terminal to answer an OSC 11 query, so it
-    // takes the environment's word and the first Client corrects it.
-    theme = await resolveFxnkTheme(themePort, process.env, 0)
-
-    // The API socket is the Instance singleton: claimed before anything is
-    // adopted, so two Runtimes can never hold the same Sessions.
-    apiServer = new ApiServer(socketPath, async (method: Method, params: unknown) => {
-      await ready.promise
-      if (!runtime) throw new ApiFailure("internal_error", "the Runtime is not ready")
-      return runtime.handle(method, params)
-    })
-    await apiServer.start()
-    const server = apiServer
-
-    transport = new CompanionTransportFactory(companion, instance.id)
-    runtime = new Runtime(createdRenderer, {
-      instanceId: instance.id,
-      instanceName: instance.name,
-      socketPath,
-      theme,
-      sessions: { instanceId: instance.id, companion, transport, environment: process.env, report },
-      publish: (event: EventName, data: unknown) => server.broadcast(eventFrame(event, data as never)),
-      report,
-    })
-    const app = runtime
-
-    themeMonitor = new FxnkThemeMonitor(themePort, theme, (next) => {
-      theme = next
-      // Nothing may open a synchronized update once teardown has begun: no
-      // frame would follow to publish it, leaving every Client's terminal in
-      // synchronized-output mode with a concealed cursor.
-      if (app.stopped) return
-      // Publish the physical clear and the atomically retinted frame together.
-      process.stdout.write(beginSynchronizedResizeClear(next.theme))
-      app.setTheme(next)
-      app.repaint()
-    })
-    themeMonitor.start()
-
-    for (const [signal, exitCode] of [
-      ["SIGHUP", 129],
-      ["SIGINT", 130],
-      ["SIGQUIT", 131],
-      ["SIGTERM", 143],
-    ] as const) {
-      const handler = () => {
-        void app.shutdown(exitCode).catch((error) => report(`shutdown failed: ${errorMessage(error)}`))
-      }
-      signalHandlers.set(signal, handler)
-      process.once(signal, handler)
-    }
-
-    // Do not expose OpenTUI's alternate-screen setup as a blank intermediate
-    // surface. Its first ordinary frame ends synchronized output after the
-    // complete application has been drawn.
-    process.stdout.write(beginSynchronizedFrame())
-    await createdRenderer.setupTerminal()
-    // One Runtime frame is broadcast to every Client. Apply the new owner size
-    // synchronously before clearing every physical terminal; input can follow
-    // the resize before OpenTUI's debounced SIGWINCH handler runs, and that
-    // interaction must not paint one last frame at the previous owner's size.
-    resizeHandler = () => {
-      if (app.stopped) return
-      createdRenderer.resize(
-        Math.max(1, process.stdout.columns || createdRenderer.width),
-        Math.max(1, process.stdout.rows || createdRenderer.height),
-      )
-      process.stdout.write(beginSynchronizedResizeClear(theme?.theme ?? "dark"))
-      // OpenTUI renders by diffing against what it believes is on screen, and
-      // this clear went out behind its back. Without a forced repaint a
-      // same-size resize leaves the cleared stage standing.
-      app.repaint()
-    }
-    process.stdout.on("resize", resizeHandler)
-    createdRenderer.start()
-
-    await app.start()
-    ready.resolve()
-    await app.waitUntilDone()
-  } catch (error) {
-    process.stdout.write(endSynchronizedFrame())
-    ready.reject(error instanceof Error ? error : new Error(String(error)))
-    if (runtime) await runtime.shutdown(1)
-    else renderer?.destroy()
-    throw error
-  } finally {
-    for (const [signal, handler] of signalHandlers) process.off(signal, handler)
-    transport?.close()
-    apiServer?.stop()
-    themeMonitor?.dispose()
-    if (resizeHandler) process.stdout.off("resize", resizeHandler)
-  }
-}
-
 /* ------------------------------------------------------------------ client */
 
 async function startInstance(instance: Instance, announce: boolean): Promise<string> {
+  if ((await existingHost(instance)) === "foreground") {
+    if (!announce) throw new Error("this Instance owns its foreground terminal; a second terminal cannot attach")
+    process.stdout.write(`${apiSocketPathFor(instance.id)}\n`)
+    return ""
+  }
   const companionPath = await resolveCompanion()
   await ensureCompanionDirectories(companionDirectories())
   const build = await companionBuild(companionPath.path)
@@ -295,6 +142,7 @@ async function attachClient(instance: Instance, startIfNeeded: boolean): Promise
     if (startIfNeeded) {
       terminalSocket = await startInstance(instance, false)
     } else {
+      if ((await existingHost(instance)) === "foreground") throw new Error("this Instance owns its foreground terminal; a second terminal cannot attach")
       const companionPath = await resolveCompanion()
       await ensureCompanionDirectories(companionDirectories())
       const companion = new CompanionCommand(companionDirectory(), process.env, companionPath.path)
@@ -315,6 +163,14 @@ async function attachClient(instance: Instance, startIfNeeded: boolean): Promise
     releaseStartupSignals()
     revealClientCursor()
   }
+}
+
+async function existingHost(instance: Instance): Promise<"foreground" | "headless" | null> {
+  let client: ApiClient
+  try { client = await ApiClient.connect(apiSocketPathFor(instance.id)) }
+  catch { return null }
+  try { return (await client.request("instance.status")).host }
+  finally { client.close() }
 }
 
 async function printStatus(instance: Instance): Promise<void> {
@@ -376,7 +232,8 @@ function errorMessage(error: unknown): string {
 }
 
 await main().catch((error) => {
-  process.stderr.write(`smolmux: ${errorMessage(error)}\n`)
+  if (headlessInstance) instanceLogger(instanceLogPathFor(headlessInstance))(`Runtime failed: ${errorMessage(error)}`)
+  else process.stderr.write(`smolmux: ${errorMessage(error)}\n`)
   // A signal's exit code is the honest one: a supervisor must be able to tell
   // a signalled shutdown from a startup failure, even when teardown then threw.
   if (process.exitCode === undefined || process.exitCode === 0) {

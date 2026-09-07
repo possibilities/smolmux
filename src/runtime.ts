@@ -11,7 +11,8 @@ import {
   type Params,
   type Result,
 } from "./protocol.ts"
-import { Sessions, type SessionsOptions } from "./sessions.ts"
+import { Apps, type AppsOptions } from "./apps.ts"
+import { METHODS } from "./protocol.ts"
 import { Stage } from "./stage.ts"
 
 export type RuntimeOptions = {
@@ -20,14 +21,16 @@ export type RuntimeOptions = {
   instanceName: string
   socketPath: string
   theme: FxnkThemeResolution
-  sessions: Omit<SessionsOptions, "renderer" | "theme" | "onExit" | "onChanged" | "onState" | "onRoster">
+  host?: "headless" | "foreground"
+  adopt?: boolean
+  sessions: Omit<AppsOptions, "renderer" | "theme" | "onExit" | "onChanged" | "onState" | "onRoster">
   publish: (event: EventName, data: unknown) => void
   /** Diagnostics that belong on the Runtime's own terminal, not in a reply. */
   report?: (line: string) => void
 }
 
 /** What an Instance with no Sessions draws until a caller applies a Layout. */
-export const EMPTY_LAYOUT: LayoutNode = { text: "no sessions" }
+export const EMPTY_LAYOUT: LayoutNode = { text: "no apps" }
 
 /**
  * The Layout a Runtime draws before any caller has applied one: the first
@@ -39,7 +42,7 @@ export const EMPTY_LAYOUT: LayoutNode = { text: "no sessions" }
  */
 export function defaultLayout(names: readonly string[]): { root: LayoutNode; focus: string | null } {
   const first = names[0]
-  return first ? { root: { session: first }, focus: first } : { root: EMPTY_LAYOUT, focus: null }
+  return first ? { root: { app: first }, focus: first } : { root: EMPTY_LAYOUT, focus: null }
 }
 
 /**
@@ -48,7 +51,7 @@ export function defaultLayout(names: readonly string[]): { root: LayoutNode; foc
  * Companion.
  */
 export class Runtime {
-  readonly sessions: Sessions
+  readonly apps: Apps
   readonly stage: Stage
   private readonly feed: EventFeed
   private availability: "ready" | "incomplete" | "unavailable" = "unavailable"
@@ -62,6 +65,7 @@ export class Runtime {
   private lastStage: { cols: number; rows: number }
   /** False until a caller applies a Layout; until then the Runtime composes one. */
   private layoutOwned = false
+  private applyingLayout = false
 
   constructor(
     private readonly renderer: CliRenderer,
@@ -72,23 +76,23 @@ export class Runtime {
     })
     this.feed = new EventFeed(() => ({ state: this.status(), availability: this.availability, reason: this.unavailableReason }), options.publish)
     this.theme = options.theme
-    this.sessions = new Sessions({
+    this.apps = new Apps({
       ...options.sessions,
       renderer,
       theme: options.theme,
-      onExit: (name, exit) => this.publish("session.exited", { name, ...exit }),
-      onChanged: (name, title) => {
-        this.publish("session.changed", { name, title })
+      onExit: (name, sessionId, exit, cause) => this.publish("session.exited", { name, sessionId, ...exit, cause }),
+      onChanged: (name, sessionId, title) => {
+        this.publish("session.changed", { name, sessionId, title })
         this.publishRoster()
       },
-      onState: (name, state) => this.publish("session.state", { name, state }),
+      onState: (app) => this.publish("app.state", { app }),
       onRoster: () => { this.refit(); this.publishRoster() },
     })
     this.stage = new Stage({
       renderer,
-      panes: this.sessions,
+      panes: this.apps,
       theme: options.theme,
-      onChanged: (cause) => this.publish("layout.changed", { layout: this.stage.view, sessions: this.sessions.list(), cause }),
+      onChanged: (cause) => this.publish("layout.changed", { layout: this.stage.view, apps: this.apps.list(), cause }),
     })
     this.lastStage = this.stage.size
     this.renderer.on(CliRenderEvents.SELECTION, this.selectionHandler)
@@ -104,7 +108,7 @@ export class Runtime {
   async start(): Promise<void> {
     if (this.shuttingDown) return
     try {
-      const outcome = await this.sessions.adopt()
+      const outcome = this.options.adopt === false ? { adopted: 0, unresolved: [] } : await this.apps.adopt()
       if (this.shuttingDown) return
       this.availability = outcome.unresolved.length ? "incomplete" : "ready"
       this.unavailableReason = outcome.unresolved.length ? "Some Companion Sessions could not be identified during adoption" : null
@@ -153,7 +157,7 @@ export class Runtime {
     this.theme = resolution
     this.renderer.setBackgroundColor(fxnkRamp(resolution.theme).background)
     this.stage.setTheme(resolution)
-    this.sessions.setTheme(resolution)
+    this.apps.setTheme(resolution)
     this.renderer.requestRender()
     this.publish("theme.changed", { theme: resolution.theme })
   }
@@ -167,8 +171,8 @@ export class Runtime {
       this.renderer.clearSelection()
       // Let go, never end: every process is the Companion's, and the next
       // Runtime for this Instance finds them where this one left them.
-      this.sessions.shutdown()
-      this.stage.destroy()
+      try { await this.apps.shutdown() }
+      finally { this.stage.destroy() }
     } finally {
       this.renderer.destroy()
       process.exitCode = exitCode
@@ -181,6 +185,9 @@ export class Runtime {
     if (this.shuttingDown && method !== "instance.status" && method !== "state.get") {
       throw new ApiFailure("conflict", "smolmux is shutting down")
     }
+    const checked = METHODS[method].params.safeParse(params ?? {})
+    if (!checked.success) throw new ApiFailure("invalid_params", checked.error.message)
+    params = checked.data
     switch (method) {
       case "state.get":
         return this.feed.snapshot()
@@ -190,16 +197,16 @@ export class Runtime {
         // Seal before killing: a create already queued behind another one
         // would otherwise start its process after the kills went out and
         // never be killed.
-        this.sessions.seal()
+        this.apps.seal()
         // Kill before answering, so the answer can be about what happened.
         // Companion commands are time-bounded, so this cannot hang the caller.
-        const survived = await this.sessions.killAll()
+        const survived = await this.apps.killAll()
         if (survived.length > 0) {
           // Stay up. Reporting success here would leave live processes with
           // nothing managing them and a caller that believes they are gone;
           // staying means session.list still names what is left and the
           // caller can retry against the same Instance.
-          this.sessions.unseal()
+          this.apps.unseal()
           this.publishRoster()
           throw new ApiFailure(
             "companion_error",
@@ -217,33 +224,39 @@ export class Runtime {
       }
       case "event.subscribe":
         throw new ApiFailure("invalid_request", "Subscriptions belong to an API connection")
-      case "session.create":
-        return this.sessions.create(params as Params<"session.create">)
-      case "session.kill": {
-        await this.sessions.kill((params as Params<"session.kill">).name)
+      case "app.create":
+        return this.apps.create(params as Params<"app.create">)
+      case "app.remove": {
+        await this.apps.remove((params as Params<"app.remove">).name)
         return {}
       }
-      case "session.list":
-        return { sessions: this.sessions.list() }
-      case "session.capture": {
-        const request = params as Params<"session.capture">
-        return this.sessions.capture(request.name, request.scrollback ?? 0)
+      case "app.restart": {
+        const request = params as Params<"app.restart">
+        return this.apps.restart(request.name, request.command)
       }
-      case "session.input": {
-        const request = params as Params<"session.input">
-        this.sessions.input(request.name, request.events, this.stage.paneOrigin(request.name))
+      case "app.list":
+        return { apps: this.apps.list() }
+      case "app.capture": {
+        const request = params as Params<"app.capture">
+        return this.apps.capture(request.name, request.scrollback ?? 0, request.sessionId)
+      }
+      case "app.input": {
+        const request = params as Params<"app.input">
+        this.apps.input(request.name, request.events, this.stage.paneOrigin(request.name), request.sessionId)
         return {}
       }
       case "layout.apply": {
         const request = params as Params<"layout.apply">
-        const view = this.stage.apply(request.root, request.focus === undefined ? undefined : request.focus, {
-          revision: request.revision,
-        })
-        // The caller owns the Layout from here; the Runtime never composes
-        // another, however the roster moves.
-        this.layoutOwned = true
-        return view
+        this.applyingLayout = true
+        try {
+          return this.stage.apply(request.root, request.focus, {
+            revision: request.revision,
+            visible: request.visible,
+            committed: () => { this.layoutOwned = true; this.apps.applyVisibility(request.visible) },
+          })
+        } finally { this.applyingLayout = false }
       }
+
       case "layout.get":
         return this.stage.view
       case "client.copy": {
@@ -262,9 +275,11 @@ export class Runtime {
       name: this.options.instanceName,
       instance_id: this.options.instanceId,
       socket: this.options.socketPath,
+      host: this.options.host ?? "headless",
+      capabilities: { local: !!this.options.sessions.local, companion: !!(this.options.sessions.companion || this.options.sessions.resolveCompanion) },
       stage: this.stage.size,
       theme: this.theme.theme,
-      sessions: this.sessions.list(),
+      apps: this.apps.list(),
       layout: this.stage.view,
     }
   }
@@ -276,19 +291,23 @@ export class Runtime {
    */
   private refit(): void {
     if (this.shuttingDown) return
+    if (this.applyingLayout || this.shuttingDown) return
     if (this.layoutOwned) this.stage.refit()
     else this.applyDefaultLayout()
   }
 
   private applyDefaultLayout(): void {
-    const { root, focus } = defaultLayout(this.sessions.list().map((session) => session.name))
+    const { root, focus } = defaultLayout(this.apps.list().map((session) => session.name))
     const current = this.stage.view
     // Nothing to publish when the composed Layout is the one already drawn.
     if (JSON.stringify(current.root) === JSON.stringify(root) && current.focus === focus) {
       this.stage.refit()
       return
     }
-    this.stage.apply(root, focus)
+    const visible = root && "app" in root ? [root.app] : []
+    this.applyingLayout = true
+    try { this.stage.apply(root, focus, { visible, committed: () => this.apps.applyVisibility(visible) }) }
+    finally { this.applyingLayout = false }
   }
 
   /**
@@ -322,7 +341,7 @@ export class Runtime {
   }
 
   private publishRoster(): void {
-    this.publish("sessions.changed", { sessions: this.sessions.list(), availability: this.availability, reason: this.unavailableReason })
+    this.publish("apps.changed", { apps: this.apps.list(), availability: this.availability, reason: this.unavailableReason })
   }
 
   private publish<E extends EventName>(event: E, data: EventData<E>): void {

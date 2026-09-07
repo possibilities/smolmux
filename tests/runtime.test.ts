@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { createTestRenderer } from "@opentui/core/testing"
 import { fileURLToPath } from "node:url"
-import type { EventName, InstanceStatus, LayoutView, SessionView } from "../src/protocol.ts"
+import type { EventName, InstanceStatus, LayoutView, AppView } from "../src/protocol.ts"
 import { eventSocketFrameSchema } from "../src/event-schema.ts"
 import { EMPTY_LAYOUT, Runtime } from "../src/runtime.ts"
 import { sessionIdentity } from "../src/session-identity.ts"
@@ -29,7 +29,7 @@ async function harness(prepare?: (companion: FakeCompanion, transport: PtyTransp
       environment: { PATH: process.env.PATH ?? "", HOME: "/home/test" },
     },
     publish: (event, data) => {
-      expect(eventSocketFrameSchema.safeParse({ v: 1, type: "event", event, data }).success).toBe(true)
+      expect(eventSocketFrameSchema.safeParse({ v: 2, type: "event", event, data }).success).toBe(true)
       events.push({ event, data })
     },
   })
@@ -61,11 +61,11 @@ test("a fresh Instance draws its empty state and reports itself", async () => {
   const app = await harness()
   try {
     const status = await app.call<InstanceStatus>("instance.status")
-    expect(status).toMatchObject({ name: "default", instance_id: INSTANCE, theme: "dark", sessions: [] })
+    expect(status).toMatchObject({ name: "default", instance_id: INSTANCE, theme: "dark", apps: [] })
     expect(status.stage).toEqual({ cols: 100, rows: 30 })
     expect(status.layout.root).toEqual(EMPTY_LAYOUT)
     await app.setup.renderOnce()
-    expect(app.setup.captureCharFrame()).toContain("no sessions")
+    expect(app.setup.captureCharFrame()).toContain("no apps")
   } finally {
     await app.close()
   }
@@ -80,7 +80,7 @@ test("an Instance that adopted Sessions shows the first one instead of the empty
   })
   try {
     const layout = await app.call<LayoutView>("layout.get")
-    expect(layout.root).toEqual({ session: "tray" })
+    expect(layout.root).toEqual({ app: "tray" })
     expect(layout.focus).toBe("tray")
   } finally {
     await app.close()
@@ -94,37 +94,40 @@ test("the Runtime's own Layout follows the roster until a caller applies one", a
 
     // A Session created with nobody arranging the screen is shown, rather
     // than leaving an empty state that claims nothing is running.
-    await app.call("session.create", { name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
+    await app.call("app.create", { pty: "companion", name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
     let layout = await app.call<LayoutView>("layout.get")
-    expect(layout.root).toEqual({ session: "tray" })
+    expect(layout.root).toEqual({ app: "tray" })
     expect(layout.focus).toBe("tray")
 
     // The first apply takes ownership; the Runtime composes no more.
-    await app.call("layout.apply", { root: { text: "held" }, focus: null })
-    await app.call("session.create", { name: "second", argv: [FAKE_APP], cwd: process.cwd() })
+    await app.call("layout.apply", { visible: [], root: { text: "held" }, focus: null })
+    await app.call("app.create", { pty: "companion", name: "second", argv: [FAKE_APP], cwd: process.cwd() })
     layout = await app.call<LayoutView>("layout.get")
     expect(layout.root).toEqual({ text: "held" })
 
     // Even back to none: an owned Layout stays the caller's.
     app.transport.forName("tray")!.write(new TextEncoder().encode("quit\r"))
     app.transport.forName("second")!.write(new TextEncoder().encode("quit\r"))
-    await waitFor(async () => (await app.call<{ sessions: SessionView[] }>("session.list")).sessions.length === 0)
+    await waitFor(async () => (await app.call<{ apps: AppView[] }>("app.list")).apps.every((app) => app.session === null))
     expect((await app.call<LayoutView>("layout.get")).root).toEqual({ text: "held" })
   } finally {
     await app.close()
   }
 })
 
-test("an unowned Layout returns to the empty state when the last Session ends", async () => {
+test("natural exit retains the App and Layout until the caller removes it", async () => {
   const app = await harness()
   try {
-    await app.call("session.create", { name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
-    expect((await app.call<LayoutView>("layout.get")).root).toEqual({ session: "tray" })
+    await app.call("app.create", { pty: "companion", name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
+    expect((await app.call<LayoutView>("layout.get")).root).toEqual({ app: "tray" })
     app.transport.forName("tray")!.write(new TextEncoder().encode("quit\r"))
-    await waitFor(async () => (await app.call<{ sessions: SessionView[] }>("session.list")).sessions.length === 0)
+    await waitFor(async () => (await app.call<{ apps: AppView[] }>("app.list")).apps.every((app) => app.session === null))
     const layout = await app.call<LayoutView>("layout.get")
-    expect(layout.root).toEqual(EMPTY_LAYOUT)
-    expect(layout.focus).toBeNull()
+    expect(layout.root).toEqual({ app: "tray" })
+    expect(layout.focus).toBe("tray")
+    expect(app.runtime.apps.view("tray").state).toBe("exited")
+    await app.call("app.remove", { name: "tray" })
+    expect((await app.call<LayoutView>("layout.get")).root).toEqual(EMPTY_LAYOUT)
   } finally {
     await app.close()
   }
@@ -134,24 +137,24 @@ test("creates a Session, puts it on the Layout, and reports it as shown", async 
   const app = await harness()
   try {
     // Nobody has applied a Layout yet, so the Runtime's own one shows it.
-    const created = await app.call<SessionView>("session.create", {
+    const created = await app.call<AppView>("app.create", { pty: "companion",
       name: "tray",
       argv: [FAKE_APP],
       cwd: process.cwd(),
     })
     // The result tells the truth about the screen it just landed on.
-    expect(created).toMatchObject({ name: "tray", shown: true, state: "live" })
+    expect(created).toMatchObject({ name: "tray", shown: true, state: "running" })
 
-    const layout = await app.call<LayoutView>("layout.apply", {
-      root: { row: [{ session: "tray", size: 26 }, { text: "no agent" }] },
+    const layout = await app.call<LayoutView>("layout.apply", { visible: ["tray"],
+      root: { row: [{ app: "tray", size: 26 }, { text: "no agent" }] },
       focus: "tray",
     })
-    expect(layout.panes.map((pane) => [pane.session ?? pane.text, pane.cols])).toEqual([
+    expect(layout.panes.map((pane) => [pane.app ?? pane.text, pane.cols])).toEqual([
       ["tray", 26],
       ["no agent", 73],
     ])
-    const listed = await app.call<{ sessions: SessionView[] }>("session.list")
-    expect(listed.sessions[0]).toMatchObject({ name: "tray", shown: true })
+    const listed = await app.call<{ apps: AppView[] }>("app.list")
+    expect(listed.apps[0]).toMatchObject({ name: "tray", shown: true })
   } finally {
     await app.close()
   }
@@ -160,12 +163,12 @@ test("creates a Session, puts it on the Layout, and reports it as shown", async 
 test("a Session that appears after its Pane fills it without another apply", async () => {
   const app = await harness()
   try {
-    await app.call("layout.apply", { root: { row: [{ session: "tray", size: 26 }, { session: "later" }] }, focus: "tray" })
-    await app.call("session.create", { name: "later", argv: [FAKE_APP], cwd: process.cwd() })
+    await app.call("layout.apply", { visible: ["tray", "later"], root: { row: [{ app: "tray", size: 26 }, { app: "later" }] }, focus: "tray" })
+    await app.call("app.create", { pty: "companion", name: "later", argv: [FAKE_APP], cwd: process.cwd() })
     const layout = await app.call<LayoutView>("layout.get")
-    expect(layout.panes.map((pane) => pane.session)).toEqual(["tray", "later"])
-    const listed = await app.call<{ sessions: SessionView[] }>("session.list")
-    expect(listed.sessions.find((session) => session.name === "later")!.shown).toBe(true)
+    expect(layout.panes.map((pane) => pane.app)).toEqual(["tray", "later"])
+    const listed = await app.call<{ apps: AppView[] }>("app.list")
+    expect(listed.apps.find((session) => session.name === "later")!.shown).toBe(true)
   } finally {
     await app.close()
   }
@@ -174,7 +177,7 @@ test("a Session that appears after its Pane fills it without another apply", asy
 test("captures a Session that no Pane shows", async () => {
   const app = await harness()
   try {
-    await app.call("session.create", {
+    await app.call("app.create", { pty: "companion",
       name: "hidden",
       argv: [FAKE_APP],
       cwd: process.cwd(),
@@ -183,16 +186,16 @@ test("captures a Session that no Pane shows", async () => {
       rows: 6,
     })
     // A Layout of the caller's that leaves it off screen; it keeps running.
-    await app.call("layout.apply", { root: { text: "nothing here" }, focus: null })
+    await app.call("layout.apply", { visible: [], root: { text: "nothing here" }, focus: null })
     await waitFor(async () => {
-      const capture = await app.call<{ lines: string[] }>("session.capture", { name: "hidden" })
+      const capture = await app.call<{ lines: string[] }>("app.capture", { name: "hidden" })
       return capture.lines.join("").includes("working")
     })
-    const capture = await app.call<{ lines: string[]; cols: number; rows: number }>("session.capture", { name: "hidden" })
+    const capture = await app.call<{ lines: string[]; cols: number; rows: number }>("app.capture", { name: "hidden" })
     expect(capture.cols).toBe(40)
     expect(capture.lines[0]).toContain("working")
-    const listed = await app.call<{ sessions: SessionView[] }>("session.list")
-    expect(listed.sessions[0]!.shown).toBe(false)
+    const listed = await app.call<{ apps: AppView[] }>("app.list")
+    expect(listed.apps[0]!.shown).toBe(false)
   } finally {
     await app.close()
   }
@@ -201,22 +204,22 @@ test("captures a Session that no Pane shows", async () => {
 test("a shown Session captures correctly after it has been drawn", async () => {
   const app = await harness()
   try {
-    await app.call("session.create", {
+    await app.call("app.create", { pty: "companion",
       name: "tray",
       argv: [FAKE_APP],
       cwd: process.cwd(),
       env: { SMOLMUX_TEST_BANNER: "drawn and read" },
     })
-    await app.call("layout.apply", { root: { session: "tray" }, focus: "tray" })
+    await app.call("layout.apply", { visible: ["tray"], root: { app: "tray" }, focus: "tray" })
     await waitFor(async () => {
-      const capture = await app.call<{ lines: string[] }>("session.capture", { name: "tray" })
+      const capture = await app.call<{ lines: string[] }>("app.capture", { name: "tray" })
       return capture.lines.join("").includes("drawn and read")
     })
     // A frame consumes the emulator's damage, so a capture that did not ask
     // for the whole screen would read blanks from here on.
     await app.setup.renderOnce()
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const capture = await app.call<{ lines: string[] }>("session.capture", { name: "tray" })
+      const capture = await app.call<{ lines: string[] }>("app.capture", { name: "tray" })
       expect(capture.lines.join("")).toContain("drawn and read")
       await app.setup.renderOnce()
     }
@@ -230,8 +233,8 @@ test("a shown Session captures correctly after it has been drawn", async () => {
 test("publishes the events a caller drives the surface from", async () => {
   const app = await harness()
   try {
-    await app.call("session.create", { name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
-    await app.call("layout.apply", { root: { session: "tray" }, focus: "tray" })
+    await app.call("app.create", { pty: "companion", name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
+    await app.call("layout.apply", { visible: ["tray"], root: { app: "tray" }, focus: "tray" })
     await waitFor(() => app.events.some((entry) => entry.event === "session.changed"))
 
     const layoutChanges = app.events.filter((entry) => entry.event === "layout.changed")
@@ -254,8 +257,8 @@ test("publishes the events a caller drives the surface from", async () => {
 test("a stage resize refits and announces the new size once", async () => {
   const app = await harness()
   try {
-    await app.call("session.create", { name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
-    await app.call("layout.apply", { root: { session: "tray" }, focus: "tray" })
+    await app.call("app.create", { pty: "companion", name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
+    await app.call("layout.apply", { visible: ["tray"], root: { app: "tray" }, focus: "tray" })
     app.events.length = 0
     app.setup.resize(60, 20)
     await Bun.sleep(50)
@@ -271,10 +274,10 @@ test("a stage resize refits and announces the new size once", async () => {
 test("kill goes to the Companion and the exit removes the Session", async () => {
   const app = await harness()
   try {
-    await app.call("session.create", { name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
-    await app.call("session.kill", { name: "tray" })
+    await app.call("app.create", { pty: "companion", name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
+    await app.call("app.remove", { name: "tray" })
     expect(app.companion.killed).toEqual([`smolmux-${INSTANCE}-tray`])
-    await expect(app.call("session.capture", { name: "missing" })).rejects.toThrow("no Session named missing")
+    await expect(app.call("app.capture", { name: "missing" })).rejects.toThrow("no App named missing")
   } finally {
     await app.close()
   }
@@ -283,7 +286,7 @@ test("kill goes to the Companion and the exit removes the Session", async () => 
 test("stop ends every Session, then answers, then ends the Runtime", async () => {
   const app = await harness()
   try {
-    await app.call("session.create", { name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
+    await app.call("app.create", { pty: "companion", name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
     expect(await app.call<Record<string, never>>("instance.stop")).toEqual({})
     expect(app.events.some((entry) => entry.event === "instance.stopping")).toBe(true)
     await app.runtime.waitUntilDone()
@@ -326,8 +329,8 @@ test("a stop seals creation so nothing starts after the kills went out", async (
   try {
     // A create the caller queued behind another one, the way a pipelined
     // connection does.
-    const first = app.call("session.create", { name: "first", argv: [FAKE_APP], cwd: process.cwd() })
-    const second = app.call("session.create", { name: "second", argv: [FAKE_APP], cwd: process.cwd() })
+    const first = app.call("app.create", { pty: "companion", name: "first", argv: [FAKE_APP], cwd: process.cwd() })
+    const second = app.call("app.create", { pty: "companion", name: "second", argv: [FAKE_APP], cwd: process.cwd() })
     await app.call("instance.stop")
     await first.catch(() => {})
     await expect(second).rejects.toMatchObject({ code: "conflict" })
@@ -360,7 +363,7 @@ test("an adopted Session that answers on a second try is not left unreachable", 
     }
   })
   try {
-    await waitFor(() => app.runtime.sessions.list()[0]?.state === "live")
+    await waitFor(() => app.runtime.apps.list()[0]?.state === "running")
     expect(attempts.length).toBeGreaterThan(1)
   } finally {
     await app.close()
@@ -413,8 +416,9 @@ test("a theme change retints in one pass and says so", async () => {
 test("stop that cannot end a Session says so and stays up", async () => {
   const app = await harness()
   try {
-    await app.call("session.create", { name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
-    await app.call("session.create", { name: "dock", argv: [FAKE_APP], cwd: process.cwd() })
+    await app.call("app.create", { pty: "companion", name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
+    await app.call("app.create", { pty: "companion", name: "dock", argv: [FAKE_APP], cwd: process.cwd() })
+    app.companion.add({ name: `smolmux-${INSTANCE}-tray` })
     app.companion.killRefuses.add(`smolmux-${INSTANCE}-tray`)
 
     // Reporting success would leave a live process nothing is managing and a
@@ -424,10 +428,10 @@ test("stop that cannot end a Session says so and stays up", async () => {
 
     // Still there to retry against, and still saying what is left.
     expect(app.runtime.stopped).toBe(false)
-    expect(await app.call("session.list")).toBeDefined()
+    expect(await app.call("app.list")).toBeDefined()
 
     // The seal came off, so the Instance is usable rather than a zombie.
-    await app.call("session.create", { name: "third", argv: [FAKE_APP], cwd: process.cwd() })
+    await app.call("app.create", { pty: "companion", name: "third", argv: [FAKE_APP], cwd: process.cwd() })
 
     // Retrying against the same Instance finishes once the Companion lets go.
     app.companion.killRefuses.clear()
@@ -444,7 +448,7 @@ test("client.copy writes one OSC 52 through the renderer and keeps nothing", asy
     expect(await app.call<{ written: boolean }>("client.copy", { text: "copied" })).toEqual({ written: true })
     // Nothing is stored: the status is the same Runtime as before.
     const status = await app.call<InstanceStatus>("instance.status")
-    expect(status).toMatchObject({ name: "default", sessions: [] })
+    expect(status).toMatchObject({ name: "default", apps: [] })
   } finally {
     await app.close()
   }
@@ -464,8 +468,8 @@ test("event snapshots distinguish failed adoption, unknown inventory, and known 
     try {
       const snapshot = await app.call<import("../src/protocol.ts").StateSnapshot>("state.get")
       expect(snapshot.availability).toBe(scenario === "failed" ? "unavailable" : scenario === "unknown" ? "incomplete" : "ready")
-      expect(snapshot.state?.sessions.length).toBe(scenario === "unreachable" ? 1 : 0)
-      if (scenario === "unreachable") expect(snapshot.state?.sessions[0]?.state).toBe("unreachable")
+      expect(snapshot.state?.apps.length).toBe(scenario === "unreachable" ? 1 : 0)
+      if (scenario === "unreachable") expect(snapshot.state?.apps[0]?.state).toBe("unreachable")
       else expect(snapshot.reason).toBeTruthy()
     } finally { await app.close() }
   }

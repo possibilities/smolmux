@@ -64,6 +64,9 @@ test("installer discovers the bun link directory without bun pm bin -g", async (
       "utf8",
     )
     await writeExecutable(join(fixtureScripts, "install.sh"), realInstallScript)
+    await writeExecutable(join(fixtureScripts, "build-local.sh"), await readFile(join(REPOSITORY_ROOT, "scripts/build-local.sh"), "utf8"))
+    await mkdir(join(fixtureRoot, "native"))
+    await writeFile(join(fixtureRoot, "native/local-pty.c"), await readFile(join(REPOSITORY_ROOT, "native/local-pty.c")))
 
     await writeExecutable(
       join(fixtureScripts, "install-companion.sh"),
@@ -118,7 +121,7 @@ test("installer discovers the bun link directory without bun pm bin -g", async (
     if (result.exitCode !== 0) {
       throw new Error(`install.sh failed (${result.exitCode}):\n${stdout}\n${stderr}`)
     }
-    expect(stdout).toContain("linked smolmux and installed the pinned Companion")
+    expect(stdout).toContain("linked smolmux and built the local PTY helper and pinned Companion")
 
     expect(await Bun.file(join(bunLinkDir, "smolmux")).exists()).toBe(true)
     expect(await Bun.file(join(localBinDir, "smolmux-zmx")).exists()).toBe(true)

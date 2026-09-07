@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { dividerGlyphs, dragDivider, fitLayout, fitLengths, layoutSessions, paneGeometries, requiredLength } from "../src/layout.ts"
+import { dividerGlyphs, dragDivider, fitLayout, fitLengths, layoutApps, paneGeometries, requiredLength } from "../src/layout.ts"
 import type { LayoutNode } from "../src/protocol.ts"
 
 const stage = { cols: 100, rows: 30 }
@@ -10,40 +10,40 @@ const sixPanels: LayoutNode = {
     {
       column: [
         { text: "top drawer", size: 8, min: 3 },
-        { session: "tray" },
+        { app: "tray" },
         { text: "bottom drawer", size: 8, min: 3 },
       ],
       size: 26,
       min: 24,
     },
-    { session: "dock", size: 20, min: 10 },
-    { session: "reviewer", min: 20 },
-    { session: "notes", size: 20, min: 10 },
+    { app: "dock", size: 20, min: 10 },
+    { app: "reviewer", min: 20 },
+    { app: "notes", size: 20, min: 10 },
   ],
 }
 
 describe("fitLengths", () => {
   test("sized children keep their size and remainder children share the rest", () => {
-    expect(fitLengths([{ session: "a", size: 26 }, { session: "b" }, { session: "c" }], 100)).toEqual([26, 36, 36])
+    expect(fitLengths([{ app: "a", size: 26 }, { app: "b" }, { app: "c" }], 100)).toEqual([26, 36, 36])
   })
 
   test("odd cells go to the first remainder children", () => {
-    expect(fitLengths([{ session: "a" }, { session: "b" }, { session: "c" }], 20)).toEqual([6, 6, 6])
-    expect(fitLengths([{ session: "a" }, { session: "b" }, { session: "c" }], 22)).toEqual([7, 7, 6])
+    expect(fitLengths([{ app: "a" }, { app: "b" }, { app: "c" }], 20)).toEqual([6, 6, 6])
+    expect(fitLengths([{ app: "a" }, { app: "b" }, { app: "c" }], 22)).toEqual([7, 7, 6])
   })
 
   test("with nothing elastic the last child absorbs the leftover", () => {
-    expect(fitLengths([{ session: "a", size: 10 }, { session: "b", size: 10 }], 50)).toEqual([10, 39])
+    expect(fitLengths([{ app: "a", size: 10 }, { app: "b", size: 10 }], 50)).toEqual([10, 39])
   })
 
   test("sized children are squeezed from the last to the first down to their minimums", () => {
     expect(
       fitLengths(
         [
-          { session: "left", size: 26, min: 24 },
-          { session: "dock", size: 40, min: 10 },
-          { session: "main", min: 20 },
-          { session: "right", size: 40, min: 10 },
+          { app: "left", size: 26, min: 24 },
+          { app: "dock", size: 40, min: 10 },
+          { app: "main", min: 20 },
+          { app: "right", size: 40, min: 10 },
         ],
         80,
       ),
@@ -51,14 +51,14 @@ describe("fitLengths", () => {
   })
 
   test("children that cannot fit at all are dropped from the last, dividers with them", () => {
-    expect(fitLengths([{ session: "a", min: 5 }, { session: "b", min: 5 }, { session: "c", min: 5 }], 8)).toEqual([8, 0, 0])
-    expect(fitLengths([{ session: "a", size: 4 }, { session: "b", size: 4 }], 9)).toEqual([4, 4])
-    expect(fitLengths([{ session: "a", size: 4 }, { session: "b", size: 4 }], 8)).toEqual([4, 3])
-    expect(fitLengths([{ session: "a", size: 4, min: 4 }, { session: "b", size: 4, min: 4 }], 8)).toEqual([8, 0])
+    expect(fitLengths([{ app: "a", min: 5 }, { app: "b", min: 5 }, { app: "c", min: 5 }], 8)).toEqual([8, 0, 0])
+    expect(fitLengths([{ app: "a", size: 4 }, { app: "b", size: 4 }], 9)).toEqual([4, 4])
+    expect(fitLengths([{ app: "a", size: 4 }, { app: "b", size: 4 }], 8)).toEqual([4, 3])
+    expect(fitLengths([{ app: "a", size: 4, min: 4 }, { app: "b", size: 4, min: 4 }], 8)).toEqual([8, 0])
   })
 
   test("an empty stage draws nothing", () => {
-    expect(fitLengths([{ session: "a" }], 0)).toEqual([0])
+    expect(fitLengths([{ app: "a" }], 0)).toEqual([0])
   })
 })
 
@@ -82,7 +82,7 @@ describe("fitLayout", () => {
   })
 
   test("a single leaf takes the whole stage", () => {
-    const fitted = fitLayout({ session: "only" }, stage)
+    const fitted = fitLayout({ app: "only" }, stage)
     expect(fitted.leaves).toHaveLength(1)
     expect(fitted.leaves[0]!.rect).toEqual({ x: 0, y: 0, cols: 100, rows: 30 })
     expect(fitted.dividers).toEqual([])
@@ -94,7 +94,7 @@ describe("fitLayout", () => {
 
   test("geometries name the session or text of each pane and who has focus", () => {
     const panes = paneGeometries(fitLayout(sixPanels, stage), "reviewer")
-    expect(panes.map((pane) => [pane.session, pane.text, pane.focused])).toEqual([
+    expect(panes.map((pane) => [pane.app, pane.text, pane.focused])).toEqual([
       [null, "top drawer", false],
       ["tray", null, false],
       [null, "bottom drawer", false],
@@ -102,7 +102,7 @@ describe("fitLayout", () => {
       ["reviewer", null, true],
       ["notes", null, false],
     ])
-    expect(layoutSessions(sixPanels)).toEqual(["tray", "dock", "reviewer", "notes"])
+    expect(layoutApps(sixPanels)).toEqual(["tray", "dock", "reviewer", "notes"])
   })
 })
 
@@ -125,7 +125,7 @@ describe("dragDivider", () => {
   })
 
   test("a divider between two remainder children moves, pinning one side", () => {
-    const root: LayoutNode = { row: [{ session: "a" }, { session: "b" }] }
+    const root: LayoutNode = { row: [{ app: "a" }, { app: "b" }] }
     // 100 cols less one divider splits 50/49, so the boundary starts at 50.
     expect(fitLayout(root, stage).dividers[0]!.rect.x).toBe(50)
     const dragged = dragDivider(root, ":0", 12, stage)!
@@ -136,14 +136,14 @@ describe("dragDivider", () => {
   })
 
   test("a remainder divider drags up as well as left", () => {
-    const root: LayoutNode = { column: [{ session: "a" }, { session: "b" }] }
+    const root: LayoutNode = { column: [{ app: "a" }, { app: "b" }] }
     expect(fitLayout(root, stage).dividers[0]!.rect.y).toBe(15)
     const dragged = dragDivider(root, ":0", -6, stage)!
     expect(fitLayout(dragged, stage).dividers[0]!.rect.y).toBe(9)
   })
 
   test("a remainder drag still refuses to cross a minimum", () => {
-    const root: LayoutNode = { row: [{ session: "a", min: 40 }, { session: "b" }] }
+    const root: LayoutNode = { row: [{ app: "a", min: 40 }, { app: "b" }] }
     const dragged = dragDivider(root, ":0", -30, stage)!
     expect(fitLayout(dragged, stage).dividers[0]!.rect.x).toBe(40)
   })
@@ -163,7 +163,7 @@ describe("dragDivider", () => {
     // A remainder before the divider: adjusting the child before it would let
     // that remainder absorb the change, pinning the grabbed boundary while a
     // different one walks the other way.
-    const tree: LayoutNode = { row: [{ session: "a" }, { session: "b", size: 10 }, { session: "c", size: 10 }] }
+    const tree: LayoutNode = { row: [{ app: "a" }, { app: "b", size: 10 }, { app: "c", size: 10 }] }
     const small = { cols: 60, rows: 20 }
     const at = (node: LayoutNode, id: string) => fitLayout(node, small).dividers.find((divider) => divider.id === id)!.rect.x
     const before = { first: at(tree, ":0"), second: at(tree, ":1") }
@@ -178,7 +178,7 @@ describe("dragDivider", () => {
 
   test("a drag between two fixed Panes moves cells across and leaves the rest alone", () => {
     const tree: LayoutNode = {
-      row: [{ session: "a" }, { session: "b", size: 10 }, { session: "c", size: 10 }],
+      row: [{ app: "a" }, { app: "b", size: 10 }, { app: "c", size: 10 }],
     }
     const small = { cols: 60, rows: 20 }
     const widths = (node: LayoutNode) => fitLayout(node, small).leaves.map((leaf) => leaf.rect.cols)
@@ -190,7 +190,7 @@ describe("dragDivider", () => {
     // A column whose only child needs ten rows cannot be drawn in three, so
     // the fit gives it what it needs or gives it up — never a blank band.
     const tree: LayoutNode = {
-      column: [{ column: [{ text: "drawer", size: 10, min: 10 }], size: 3, min: 3 }, { session: "main" }],
+      column: [{ column: [{ text: "drawer", size: 10, min: 10 }], size: 3, min: 3 }, { app: "main" }],
     }
     expect(requiredLength(tree.column[0]!, "column")).toBe(10)
     const fitted = fitLayout(tree, { cols: 40, rows: 20 })
@@ -206,15 +206,15 @@ describe("dragDivider", () => {
   })
 
   test("a child's minimum applies only along its parent's axis", () => {
-    expect(requiredLength({ row: [{ session: "a", min: 40 }] }, "column")).toBe(1)
+    expect(requiredLength({ row: [{ app: "a", min: 40 }] }, "column")).toBe(1)
 
     const tree: LayoutNode = {
       column: [
         { text: "hdr", size: 1 },
         {
           row: [
-            { session: "claude", min: 60 },
-            { column: [{ session: "clock", size: 12 }, { session: "tree" }], size: 48 },
+            { app: "claude", min: 60 },
+            { column: [{ app: "clock", size: 12 }, { app: "tree" }], size: 48 },
           ],
         },
       ],
@@ -222,18 +222,18 @@ describe("dragDivider", () => {
     const fitted = fitLayout(tree, { cols: 161, rows: 46 })
     expect(fitted.leaves.map((leaf) => [leaf.node, leaf.rect])).toEqual([
       [{ text: "hdr", size: 1 }, { x: 0, y: 0, cols: 161, rows: 1 }],
-      [{ session: "claude", min: 60 }, { x: 0, y: 2, cols: 112, rows: 44 }],
-      [{ session: "clock", size: 12 }, { x: 113, y: 2, cols: 48, rows: 12 }],
-      [{ session: "tree" }, { x: 113, y: 15, cols: 48, rows: 31 }],
+      [{ app: "claude", min: 60 }, { x: 0, y: 2, cols: 112, rows: 44 }],
+      [{ app: "clock", size: 12 }, { x: 113, y: 2, cols: 48, rows: 12 }],
+      [{ app: "tree" }, { x: 113, y: 15, cols: 48, rows: 31 }],
     ])
   })
 
   test("a squeezed-out Pane is reported at zero rather than dropped", () => {
     const tree: LayoutNode = {
       row: [
-        { session: "a", size: 40, min: 40 },
-        { session: "b", size: 40, min: 40 },
-        { session: "c", size: 40, min: 40 },
+        { app: "a", size: 40, min: 40 },
+        { app: "b", size: 40, min: 40 },
+        { app: "c", size: 40, min: 40 },
       ],
     }
     // The contract says every Pane appears in tree order; a caller zipping
@@ -244,14 +244,14 @@ describe("dragDivider", () => {
       [60, [60, 0, 0]],
     ] as const) {
       const panes = paneGeometries(fitLayout(tree, { cols, rows: 20 }), null)
-      expect(panes.map((pane) => pane.session), `at ${cols}`).toEqual(["a", "b", "c"])
+      expect(panes.map((pane) => pane.app), `at ${cols}`).toEqual(["a", "b", "c"])
       expect(panes.map((pane) => pane.cols), `at ${cols}`).toEqual([...expected])
     }
   })
 
   test("one Session named twice reports one focused Pane", () => {
     const panes = paneGeometries(
-      fitLayout({ row: [{ session: "a", size: 20 }, { session: "a" }] }, { cols: 60, rows: 20 }),
+      fitLayout({ row: [{ app: "a", size: 20 }, { app: "a" }] }, { cols: 60, rows: 20 }),
       "a",
     )
     expect(panes).toHaveLength(2)
@@ -265,8 +265,8 @@ describe("dividerGlyphs", () => {
   test("a crossing resolves to a join rather than one line overwriting the other", () => {
     const grid: LayoutNode = {
       row: [
-        { column: [{ session: "a" }, { session: "b" }] },
-        { column: [{ session: "c" }, { session: "d" }] },
+        { column: [{ app: "a" }, { app: "b" }] },
+        { column: [{ app: "c" }, { app: "d" }] },
       ],
     }
     const glyphs = glyphsFor(grid, { cols: 21, rows: 7 })
@@ -281,7 +281,7 @@ describe("dividerGlyphs", () => {
     const sidebar: LayoutNode = {
       column: [
         { text: "header", size: 1 },
-        { row: [{ column: [{ session: "a" }, { session: "b" }], size: 6 }, { session: "c" }] },
+        { row: [{ column: [{ app: "a" }, { app: "b" }], size: 6 }, { app: "c" }] },
         { text: "footer", size: 1 },
       ],
     }
@@ -295,11 +295,11 @@ describe("dividerGlyphs", () => {
   })
 
   test("a lone divider is still a line", () => {
-    expect(glyphsFor({ row: [{ session: "a" }, { session: "b" }] }).get("50,0")).toBe("│")
-    expect(glyphsFor({ column: [{ session: "a" }, { session: "b" }] }).get("0,15")).toBe("─")
+    expect(glyphsFor({ row: [{ app: "a" }, { app: "b" }] }).get("50,0")).toBe("│")
+    expect(glyphsFor({ column: [{ app: "a" }, { app: "b" }] }).get("0,15")).toBe("─")
   })
 
   test("no dividers, no glyphs", () => {
-    expect(glyphsFor({ session: "a" }).size).toBe(0)
+    expect(glyphsFor({ app: "a" }).size).toBe(0)
   })
 })

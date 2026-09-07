@@ -4,7 +4,7 @@ import { COMMANDS, parseArgs, usage, VERSION } from "../src/cli.ts"
 
 describe("parseArgs", () => {
   test("keeps the executable to start, stop, attach, and reporting", () => {
-    expect(parseArgs([])).toEqual({ help: false, version: false, command: null, name: "default" })
+    expect(parseArgs([])).toEqual({ foreground: false, localOnly: false, help: false, version: false, command: null, name: "default" })
     expect(parseArgs(["start"]).command).toBe("start")
     expect(parseArgs(["attach"]).command).toBe("attach")
     expect(parseArgs(["stop"]).command).toBe("stop")

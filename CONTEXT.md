@@ -1,6 +1,6 @@
 # smolmux glossary
 
-**Instance** — one running smolmux: a Runtime, its Sessions, one Layout, and one
+**Instance** — one running smolmux: a Runtime, its Apps, one Layout, and one
 API socket. Named by `--name`, `default` unless told otherwise; several run
 side by side and share nothing but `config.toml`. Its id is derived from that
 file's directory and its name, never stored, and labels every Companion
@@ -8,11 +8,25 @@ session it creates; the directory is in it because the private socket is one
 path per machine.
 _Avoid_: home, profile, workspace, server.
 
-**Session** — one command running in a Companion-held PTY, together with the
-emulator smolmux renders it in. Named by its caller, `[a-z][a-z0-9_-]{0,31}`,
-unique per Instance. It runs whether or not a Pane shows it, and it
-disappears when its process exits — never when smolmux does.
-_Avoid_: pane, agent, window, tab, instance, job.
+**App** — a named command declaration in an Instance: argv, directory,
+environment, PTY ownership, and behavior while hidden. It remains declared
+when its process stops or exits; it has at most one current Session.
+_Avoid_: pane, session, agent, job.
+
+**Session** — one execution of an App, with a unique id, a process and PTY,
+and the emulator smolmux renders. A Companion-held Session survives the
+Runtime; a local Session belongs to it and ends with it.
+_Avoid_: app, pane, agent, window, tab, instance, job.
+
+**Visibility** — the caller's logical set of Apps that should be presented,
+committed with the Layout and its Revision. Hidden policies follow this set;
+`shown` separately reports whether the fitted Pane actually has cells.
+_Avoid_: focus, shown, geometry.
+
+**Hidden policy** — a local App's `whenHidden`: `keep` continues running,
+`stop` ends its Session and starts fresh when visible, and `pause` suspends
+and resumes the same Session. Companion Apps always keep running.
+_Avoid_: lifecycle, suspension policy, agent state.
 
 **Layout** — the tree of rows and columns whose leaves are Panes, applied
 whole by `layout.apply`. Sizes live in the tree, so resizing a Pane is
@@ -20,17 +34,17 @@ applying a tree with a different size; there is no resize verb. smolmux fits it
 to the Stage and re-fits on every change, so each Session hears its size once.
 _Avoid_: window, grid, arrangement, split.
 
-**Pane** — one leaf of the Layout: a rectangle showing one Session, or one
+**Pane** — one leaf of the Layout: a rectangle showing one App’s terminal, or one
 line of text. It has a size in columns or rows, or takes the remainder, and a
 `min` it will not be squeezed below.
 _Avoid_: panel, tile, slot, cell, viewport.
 
 **Default Layout** — what a Runtime draws before any caller has applied one:
-the first Session, or the line `no sessions` when there are none. It is the
+the first App, or the line `no apps` when there are none. It is the
 Runtime's own and follows the roster; the first `layout.apply` takes
 ownership, after which the Runtime composes no Layout however the roster
 moves.
-_Avoid_: fallback, empty state (that is the text it draws with no Sessions),
+_Avoid_: fallback, empty state (that is the text it draws with no Apps),
 initial layout.
 
 **Revision** — the counter the Layout carries, moved on by every apply and
@@ -39,13 +53,14 @@ and a stale write is refused, so a human's drag is never silently undone by a
 read-modify-write that crossed it.
 _Avoid_: version, generation, etag, sequence.
 
-**Stage** — the drawn area, at the sizing owner's dimensions. Cells no Pane
+**Stage** — the drawn area, at the sizing owner's dimensions for a headless
+Runtime, or its physical terminal's dimensions for a foreground Runtime. Cells no Pane
 covers stay the terminal's own canvas.
 _Avoid_: screen, canvas, window, viewport.
 
-**Focus** — the one Pane the keyboard goes to, named by `layout.apply` and
-moved by nothing else. A click forwards its mouse report and moves nothing; a
-focused Session that leaves the Layout takes the keyboard with it.
+**Focus** — the App leaf intended to receive the keyboard, named by `layout.apply`
+and moved by nothing else. It remains intended while starting or squeezed,
+but receives input only while shown; leaving the tree clears it.
 _Avoid_: active pane, selection, current.
 
 **Divider** — the one-cell boundary between siblings in a container, drawn in
@@ -53,8 +68,8 @@ the Ramp's divider step. Dragging one changes the sized Pane beside it and
 publishes `layout.changed` with cause `drag`.
 _Avoid_: border, splitter, gutter, handle.
 
-**Capture** — a Session's screen as text with its cursor and title, read by
-`session.capture` whether or not a Pane shows it, optionally with lines that
+**Capture** — an App's current Session screen as text with its cursor and title, read by
+`app.capture` whether or not a Pane shows it, optionally with lines that
 have scrolled off the top. It composes the emulator into a buffer of smolmux's own
 rather than reading the frame a render pass drew, because a hidden Pane is
 never drawn, and it reads history from that same emulator rather than from the
@@ -62,12 +77,11 @@ Companion. Paired with `session.changed`, it is the whole screen-reading
 surface; there is no byte-level observation.
 _Avoid_: screenshot, dump, scrape, snapshot.
 
-**Runtime** — the one Companion-held smolmux process and PTY for an Instance. It
-owns the renderer, the roster, the Stage, and the API socket. It is headless:
-it starts, renders, and holds its Sessions whether or not a terminal Client is
-attached, and it ends on `instance.stop`, a signal, or a crash — never
-because the last Client left.
-_Avoid_: server, daemon, host, backend.
+**Runtime** — the smolmux process owning the App declarations, Sessions,
+renderer, Stage, and API socket. It either renders headlessly in a Companion
+PTY for attached Clients, or directly in its foreground terminal; closing a
+foreground Runtime ends local Sessions and releases Companion Sessions.
+_Avoid_: server, daemon, backend.
 
 **Client** — one thin interactive `smolmux attach` and its physical terminal. It
 relays terminal bytes and size, samples its own background so the Runtime can
@@ -107,11 +121,10 @@ the record and smolmux keeps no file of its own. An exited session's record is
 consumed; one that cannot be read is left for the next start.
 _Avoid_: reconciliation, restore, join, manifest.
 
-**Transport** — what carries one Session's terminal between smolmux and the
-Companion: bytes out, bytes in, the size, and the two ways it ends — the
+**Transport** — what carries one Session's terminal between its emulator and its PTY owner: bytes out, bytes in, the size, and the two ways it ends — the
 process ending, with a status, against the transport itself dropping, which
-says nothing about the process. The seam a Session renders through; the
-Companion's socket is the only one smolmux ships.
+says nothing about the process. The seam a Session renders through, independent of process ownership;
+Companion and local PTYs use it.
 _Avoid_: connection (that is the socket underneath), PTY, backend.
 
 **Restore** — what the Companion sends first on every attach: the Session's
@@ -134,6 +147,7 @@ four-platform CI result is later binary observability.
 _Avoid_: release gate, partial verdict, best effort.
 
 **Source installation** — `scripts/install.sh`, the shared consumer and
-operator path that links smolmux and builds the Companion pin from exact source.
+operator path that links smolmux, builds the local helper, and optionally builds
+the Companion pin from exact source.
 Smolmux has no binary release or publication path.
 _Avoid_: release, bucket installer, artifact channel.

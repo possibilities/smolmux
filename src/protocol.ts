@@ -9,11 +9,11 @@ import { z } from "zod"
  * `request` frames and receives `response` frames with the same id; after
  * `event.subscribe` it also receives `event` frames until it hangs up.
  */
-export const PROTOCOL_VERSION = 1
+export const PROTOCOL_VERSION = 2
 
-export const SESSION_NAME = /^[a-z][a-z0-9_-]{0,31}$/u
+export const APP_NAME = /^[a-z][a-z0-9_-]{0,31}$/u
 
-const sessionName = z.string().regex(SESSION_NAME).describe("Session name: [a-z][a-z0-9_-]{0,31}")
+const appName = z.string().regex(APP_NAME).describe("App name: [a-z][a-z0-9_-]{0,31}")
 const theme = z.enum(["dark", "light"])
 /** `null` as its own `anyOf` branch, described, so JSON Schema readers keep it. */
 const NONE = z.null().describe("null when there is none")
@@ -25,20 +25,41 @@ export const stageSchema = z.object({
 })
 export type Stage = z.infer<typeof stageSchema>
 
+export const ptySchema = z.enum(["companion", "local"])
+export const hiddenPolicySchema = z.enum(["keep", "stop", "pause"])
+export const appStateSchema = z.enum(["stopped", "starting", "running", "pausing", "paused", "resuming", "stopping", "exited", "unreachable", "failed"])
+export type PtyKind = z.infer<typeof ptySchema>
+export type HiddenPolicy = z.infer<typeof hiddenPolicySchema>
+export type AppState = z.infer<typeof appStateSchema>
+export const sessionExitSchema = z.object({ code: z.int().nullable(), signal: z.int().nullable(), reason: z.string() }).strict()
+export const exitCauseSchema = z.enum(["natural", "hidden", "remove", "restart", "shutdown"])
+export type ExitCause = z.infer<typeof exitCauseSchema>
 export const sessionViewSchema = z.object({
-  name: sessionName,
-  pid: z.int().or(NONE).describe("The child's pid; null while unknown"),
+  id: z.string().uuid(),
+  pid: z.int().nullable(),
+  created_at: z.number(),
+  state: z.enum(["live", "paused", "unreachable"]),
+}).strict()
+export type SessionView = z.infer<typeof sessionViewSchema>
+export const appViewSchema = z.object({
+  name: appName,
+  pty: ptySchema,
+  whenHidden: hiddenPolicySchema,
   cwd: z.string(),
-  argv: z.array(z.string()).or(NONE).describe("The argv it was created with; null when adopted from a previous Runtime"),
-  created_at: z.number().describe("ms since the epoch"),
-  title: z.string().describe("The last OSC 0/2 title the Session set; empty until it sets one"),
+  argv: z.array(z.string()).nullable().describe("Original argv; null after Companion Adoption. Environment values are never published."),
+  created_at: z.number(),
+  title: z.string(),
   cols: z.int().min(1),
   rows: z.int().min(1),
-  shown: z.boolean().describe("Whether a Pane of the current Layout shows it"),
-  state: z.enum(["live", "unreachable"]).describe("unreachable: its transport dropped and could not be reopened yet"),
+  visible: z.boolean().describe("Logical visibility, independent of fitting"),
+  shown: z.boolean().describe("A fitted Pane has cells showing the App"),
+  state: appStateSchema,
+  session: sessionViewSchema.nullable(),
+  lastExit: sessionExitSchema.extend({ sessionId: z.string().uuid(), cause: exitCauseSchema }).nullable(),
+  error: z.string().nullable(),
   labels: z.record(labelToken, z.string()),
-})
-export type SessionView = z.infer<typeof sessionViewSchema>
+}).strict()
+export type AppView = z.infer<typeof appViewSchema>
 
 const sizedLeaf = {
   size: z.int().min(1).optional().describe("Fixed columns in a row, rows in a column; omitted takes the remainder"),
@@ -46,10 +67,10 @@ const sizedLeaf = {
 }
 
 export type LayoutNode =
-  | { row: LayoutNode[]; size?: number; min?: number }
-  | { column: LayoutNode[]; size?: number; min?: number }
-  | { session: string; size?: number; min?: number }
-  | { text: string; size?: number; min?: number }
+  | { row: LayoutNode[]; size?: number | undefined; min?: number | undefined }
+  | { column: LayoutNode[]; size?: number | undefined; min?: number | undefined }
+  | { app: string; size?: number | undefined; min?: number | undefined }
+  | { text: string; size?: number | undefined; min?: number | undefined }
 
 /**
  * How deep a Layout may nest. A frame may carry far more nesting than a
@@ -63,7 +84,7 @@ export const layoutNodeSchema: z.ZodType<LayoutNode, LayoutNode> = z.lazy(() =>
   z.union([
     z.object({ row: z.array(layoutNodeSchema).min(1), ...sizedLeaf }).strict(),
     z.object({ column: z.array(layoutNodeSchema).min(1), ...sizedLeaf }).strict(),
-    z.object({ session: sessionName, ...sizedLeaf }).strict(),
+    z.object({ app: appName, ...sizedLeaf }).strict(),
     z.object({ text: z.string().max(200), ...sizedLeaf }).strict(),
   ]),
 )
@@ -100,7 +121,7 @@ export function frameNestingDepth(line: string, limit = MAX_LAYOUT_DEPTH): numbe
 }
 
 export const paneGeometrySchema = z.object({
-  session: sessionName.or(NONE),
+  app: appName.or(NONE),
   text: z.string().or(NONE),
   x: z.int().min(0),
   y: z.int().min(0),
@@ -115,8 +136,9 @@ export const layoutViewSchema = z.object({
     .int()
     .min(0)
     .describe("Increments whenever the tree changes, by an apply or a divider drag; pass it back to layout.apply to refuse a stale write"),
+  visible: z.array(appName).describe("Complete logical visibility set committed with the tree"),
   root: layoutNodeSchema.or(NONE).describe("The applied tree with sizes as they stand after drags"),
-  focus: sessionName.or(NONE).describe("The Session the keyboard goes to"),
+  focus: appName.or(NONE).describe("The App the keyboard goes to"),
   stage: stageSchema,
   panes: z.array(paneGeometrySchema).describe("Every Pane as fitted, in tree order; a squeezed-out Pane has 0 cols or rows"),
 })
@@ -130,7 +152,8 @@ export type LayoutView = z.infer<typeof layoutViewSchema>
 export const MAX_CAPTURE_SCROLLBACK = 10_000
 
 export const captureSchema = z.object({
-  name: sessionName,
+  name: appName,
+  sessionId: z.string().uuid(),
   lines: z
     .array(z.string())
     .describe("One string per row, trailing blanks trimmed; history first when scrollback was asked for"),
@@ -143,7 +166,7 @@ export const captureSchema = z.object({
   cursor: z.object({ x: z.int().min(0), y: z.int().min(0), visible: z.boolean() }).describe("Relative to the visible screen"),
   title: z.string(),
   state: z
-    .enum(["live", "unreachable"])
+    .enum(["running", "paused", "unreachable"])
     .describe("unreachable: the screen this Session last had, read from its emulator, not one its transport confirmed"),
 })
 export type Capture = z.infer<typeof captureSchema>
@@ -244,7 +267,9 @@ export const instanceStatusSchema = z.object({
   socket: z.string().describe("This API socket's path"),
   stage: stageSchema,
   theme,
-  sessions: z.array(sessionViewSchema),
+  apps: z.array(appViewSchema),
+  host: z.enum(["headless", "foreground"]),
+  capabilities: z.object({ local: z.boolean(), companion: z.boolean() }).strict(),
   layout: layoutViewSchema,
 })
 export type InstanceStatus = z.infer<typeof instanceStatusSchema>
@@ -272,112 +297,73 @@ export function matchesEvent(filters: readonly string[], event: string): boolean
 
 const empty = z.object({}).strict()
 
+export const commandSchema = z.object({
+  argv: z.array(z.string().min(1)).min(1),
+  cwd: z.string().min(1).refine((value) => value.startsWith("/"), "cwd must be absolute"),
+  env: z.record(z.string(), z.string()).optional(),
+}).strict()
+export const appCreateSchema = commandSchema.extend({
+  name: appName,
+  pty: ptySchema,
+  whenHidden: hiddenPolicySchema.default("keep"),
+  cols: z.int().min(1).max(4096).optional(),
+  rows: z.int().min(1).max(4096).optional(),
+  labels: z.record(labelToken, labelToken).optional(),
+}).strict().refine((p) => p.pty === "local" || p.whenHidden === "keep", "Companion Apps require whenHidden: keep")
+  .refine((p) => (p.cols ?? 80) * (p.rows ?? 24) <= 262144, "initial size must not exceed 262144 cells")
+export type AppCreate = z.input<typeof appCreateSchema>
+const appTarget = z.object({ name: appName, sessionId: z.string().uuid().optional().describe("Refuse if the App now has another Session") })
 export const METHODS = {
   "state.get": {
-    description: "Atomic complete current projection and publication watermark, independent of filters; explicit incomplete/unavailable adoption or size limits. Subscribe first. Transient notifications are not superseded by this watermark.",
-    params: empty,
-    result: stateSnapshotSchema,
+    description: "Atomic complete projection and publication watermark. Subscribe first; transient Session notifications are independent of snapshot watermarks.",
+    params: empty, result: stateSnapshotSchema,
   },
   "instance.status": {
-    description: "The Runtime as it stands: version, stage size, theme, every Session, and the Layout.",
-    params: empty,
-    result: instanceStatusSchema,
+    description: "Runtime, host mode, capabilities, Apps and Layout.", params: empty, result: instanceStatusSchema,
   },
   "instance.stop": {
-    description:
-      "Kill every Session, then respond and end the Runtime; every Client detaches. Refused with companion_error, and the Instance left running, when any Session could not be ended — so success means every process is gone.",
-    params: empty,
-    result: empty,
+    description: "Seal declarations, end every local and Companion process, then reply and stop. A failed termination leaves the Instance available to retry.",
+    params: empty, result: empty,
   },
   "event.subscribe": {
-    description: "Replace this connection's event filters; acknowledgment is the replacement boundary. Default *, exact names or literal trailing-* prefixes.",
-    params: eventSubscriptionSchema,
-    result: z.object({ subscribed: z.literal(true), events: eventFiltersSchema }).strict(),
+    description: "Replace connection-local literal filters; acknowledgment is the replacement boundary. Default *, exact names, or trailing-* prefixes.",
+    params: eventSubscriptionSchema, result: z.object({ subscribed: z.literal(true), events: eventFiltersSchema }).strict(),
   },
-  "session.create": {
-    description:
-      "Start a command in a Companion-held PTY under a caller-chosen name. It runs whether or not a Pane shows it; put it in the Layout with layout.apply. Initial size is limited to 262144 cells and 4096 per dimension.",
-    params: z
-      .object({
-        name: sessionName,
-        argv: z.array(z.string().min(1)).min(1).describe("The executable first"),
-        cwd: z.string().min(1).describe("An absolute directory"),
-        env: z.record(z.string(), z.string()).optional().describe("Applied over smolmux's own environment with its private variables removed"),
-        cols: z.int().min(1).max(4096).optional().describe("The PTY size until a Pane sizes it; default 80"),
-        rows: z.int().min(1).max(4096).optional().describe("default 24"),
-        labels: z.record(labelToken, labelToken).optional().describe("Caller labels kept on the Companion session; owner, instance, and session are smolmux's"),
-      })
-      .strict()
-      .refine((params) => (params.cols ?? 80) * (params.rows ?? 24) <= 262_144, "initial size must not exceed 262144 cells"),
-    result: sessionViewSchema,
+  "app.create": {
+    description: "Declare a named command. Companion/keep and local/keep start immediately; local stop/pause wait until logically visible. A failed launch remains declared as failed, with an error.",
+    params: appCreateSchema, result: appViewSchema,
   },
-  "session.kill": {
-    description: "Ask the Companion to end a Session's process. Its removal arrives as session.exited.",
-    params: z.object({ name: sessionName }).strict(),
-    result: empty,
+  "app.remove": {
+    description: "Terminate the current Session, if any, and remove the declaration. Removing an unknown App is not_found.",
+    params: z.object({ name: appName }).strict(), result: empty,
   },
-  "session.list": {
-    description: "Every Session in creation order.",
-    params: empty,
-    result: z.object({ sessions: z.array(sessionViewSchema) }),
+  "app.restart": {
+    description: "End the current Session and request a fresh execution, respecting hidden policy. Supply command for an adopted App whose original argv/environment are unavailable. Natural exits never restart automatically.",
+    params: z.object({ name: appName, command: commandSchema.optional() }).strict(), result: appViewSchema,
   },
-  "session.capture": {
-    description:
-      "A Session's screen as text, with its cursor and title, shown or not. `scrollback` asks for that many lines that have scrolled off the top, read from the Session's own emulator.",
-    params: z
-      .object({
-        name: sessionName,
-        scrollback: z
-          .int()
-          .min(0)
-          .max(MAX_CAPTURE_SCROLLBACK)
-          .optional()
-          .describe(`Lines of history above the screen; at most ${MAX_CAPTURE_SCROLLBACK}, default none`),
-      })
-      .strict(),
-    result: captureSchema,
+  "app.list": {
+    description: "All App declarations, including stopped, paused, exited and failed Apps.",
+    params: empty, result: z.object({ apps: z.array(appViewSchema) }).strict(),
   },
-  "session.input": {
-    description:
-      "Deliver keyboard, text, paste and mouse input to a Session as a human at its keyboard would. Events apply in order and are encoded for the terminal modes that Session has turned on, so a caller never writes an escape sequence. Input never moves focus, and a Session takes input whether or not a Pane shows it — except mouse, which needs the coordinates only a Pane gives it.",
-    params: z
-      .object({
-        name: sessionName,
-        events: z.array(inputEventSchema).min(1).max(MAX_INPUT_EVENTS),
-      })
-      .strict(),
+  "app.capture": {
+    description: "Capture the current Session and optional emulator scrollback, even off-Layout or paused/unreachable. not_running when no terminal exists. A supplied sessionId guards against replacement.",
+    params: appTarget.extend({ scrollback: z.int().min(0).max(MAX_CAPTURE_SCROLLBACK).optional() }).strict(), result: captureSchema,
+  },
+  "app.input": {
+    description: "Deliver an ordered semantic input batch to a running App without moving Focus. Paused, stopped, transitioning and unreachable Apps refuse input; mouse needs a fitted Pane. Never replay input after restart.",
+    params: appTarget.extend({ events: z.array(inputEventSchema).min(1).max(MAX_INPUT_EVENTS) }).strict(),
     result: empty,
   },
   "layout.apply": {
-    description:
-      "Replace the Layout with a tree of rows and columns whose leaves show Sessions or a line of text, and name the Session the keyboard goes to. Sessions in no Pane keep running at their last size.",
-    params: z
-      .object({
-        root: layoutNodeSchema.or(NONE),
-        focus: sessionName.or(NONE).optional().describe("Omitted keeps the focus if that Session is still shown"),
-        revision: z
-          .int()
-          .min(0)
-          .optional()
-          .describe(
-            "The revision this tree was built from. The apply is refused as a conflict when the Layout has moved since, so a human's divider drag is never silently clobbered by a stale read-modify-write.",
-          ),
-      })
-      .strict(),
+    description: "Commit the tree, logical visible set and optional Focus under a Revision guard. Every App in the tree must be visible; extra visible Apps may be omitted by a caller's fitting. Only a successful commit schedules process policy transitions, which complete asynchronously through App state/events.",
+    params: z.object({ root: layoutNodeSchema.nullable(), visible: z.array(appName), focus: appName.nullable().optional(), revision: z.int().min(0).optional() }).strict(),
     result: layoutViewSchema,
   },
-  "layout.get": {
-    description: "The Layout as fitted to the stage right now.",
-    params: empty,
-    result: layoutViewSchema,
-  },
+  "layout.get": { description: "Current tree, logical visibility, Focus, Revision, Stage and fitted Panes.", params: empty, result: layoutViewSchema },
   "client.copy": {
-    description:
-      "Put text on the clipboard of the terminal every attached Client runs in, the way a mouse selection copy does: the Runtime writes one OSC 52 sequence into its output and each Client relays it to its terminal, so a copy lands where a human attached over SSH is sitting. Write-only; terminals refuse OSC 52 reads. Nothing is kept: a Client that attaches later receives nothing. `written` is false when the host terminal was detected as not supporting OSC 52.",
-    params: z
-      .object({ text: z.string().min(1).max(MAX_INPUT_PASTE).describe("What the clipboard should hold; as much as a paste") })
-      .strict(),
-    result: z.object({ written: z.boolean().describe("Whether the sequence was written; false when OSC 52 is known unsupported") }).strict(),
+    description: "Write text to every attached Client's clipboard through OSC 52, or to the foreground terminal. Write-only; nothing is retained or read back.",
+    params: z.object({ text: z.string().min(1).max(MAX_INPUT_PASTE) }).strict(),
+    result: z.object({ written: z.boolean() }).strict(),
   },
 } as const
 
@@ -387,48 +373,33 @@ export type Params<M extends Method> = z.input<(typeof METHODS)[M]["params"]>
 export type Result<M extends Method> = z.infer<(typeof METHODS)[M]["result"]>
 
 export const EVENTS = {
-  "sessions.changed": {
-    description: "Current state: replace the Session roster, including sizes, titles, visibility and reachability. Removal does not imply successful completion.",
-    data: z.object({ sessions: z.array(sessionViewSchema), availability: availabilitySchema, reason: z.string().nullable() }),
+  "apps.changed": {
+    description: "Current state: replace the App roster, including stopped/exited declarations. Roster removal is not proof of successful process completion.",
+    data: z.object({ apps: z.array(appViewSchema), availability: availabilitySchema, reason: z.string().nullable() }),
   },
   "state.invalidated": {
-    description: "Current state: the event exceeded the 2 MiB projection limit; invalidate observation and request state.get. No partial projection is complete.",
+    description: "Current state: projection exceeded the publication bound. Invalidate observation and request state.get.",
     data: z.object({ reason: z.string() }),
   },
   "session.exited": {
-    description: "Transient: a Session's process ended, or adoption found it gone. code and signal are null when the Companion could not read them.",
-    data: z.object({
-      name: sessionName,
-      code: z.int().or(NONE),
-      signal: z.int().or(NONE),
-      reason: z.string(),
-    }),
+    description: "Transient: one execution ended. App identity and Session id distinguish it from a replacement; cause identifies intentional lifecycle actions. Nullable status is honest when unavailable.",
+    data: sessionExitSchema.extend({ name: appName, sessionId: z.string().uuid(), cause: exitCauseSchema }),
   },
-  "session.state": {
-    description:
-      "Current state: a Session's transport was lost or came back. Input to an unreachable Session is refused; its screen stays readable as the one it last had.",
-    data: z.object({ name: sessionName, state: z.enum(["live", "unreachable"]) }),
+  "app.state": {
+    description: "Current state: replace this App's complete view after a process or visibility transition.",
+    data: z.object({ app: appViewSchema }),
   },
   "session.changed": {
-    description: "Transient: output or a title change reached a Session's screen; debounced. Capture it to read it.",
-    data: z.object({ name: sessionName, title: z.string() }),
+    description: "Transient: output or a title reached this Session's emulator; debounced. Capture the App with this sessionId to avoid reading a replacement.",
+    data: z.object({ name: appName, sessionId: z.string().uuid(), title: z.string() }),
   },
   "layout.changed": {
-    description: "Current state: the fitted Layout changed: an apply, a divider drag, or a stage resize.",
-    data: z.object({ layout: layoutViewSchema, sessions: z.array(sessionViewSchema), cause: z.enum(["apply", "drag", "resize"]) }),
+    description: "Current state: Layout after an apply, divider drag, or Stage resize, with logical visibility and App views.",
+    data: z.object({ layout: layoutViewSchema, apps: z.array(appViewSchema), cause: z.enum(["apply", "drag", "resize"]) }),
   },
-  "stage.changed": {
-    description: "Current state: the stage took a new size from its sizing owner.",
-    data: stageSchema,
-  },
-  "theme.changed": {
-    description: "Current state: the resolved fxnk theme changed.",
-    data: z.object({ theme }),
-  },
-  "instance.stopping": {
-    description: "Current state: instance.stop was accepted; the socket closes after this.",
-    data: empty,
-  },
+  "stage.changed": { description: "Current state: physical Stage size changed.", data: stageSchema },
+  "theme.changed": { description: "Current state: resolved fxnk theme changed.", data: z.object({ theme }) },
+  "instance.stopping": { description: "Current state: instance.stop was accepted; the socket closes after the reply.", data: empty },
 } as const
 
 export type EventName = keyof typeof EVENTS
@@ -441,6 +412,9 @@ export const ERROR_CODES = [
   "not_found",
   "conflict",
   "companion_error",
+  "process_error",
+  "not_running",
+  "unsupported",
   "internal_error",
 ] as const
 export type ErrorCode = (typeof ERROR_CODES)[number]

@@ -16,7 +16,7 @@ async function harness() {
   const transport = new PtyTransportFactory()
   const exits: { name: string; exit: SessionExit }[] = []
   const changes: { name: string; title: string }[] = []
-  const states: { name: string; state: "live" | "unreachable" }[] = []
+  const states: { name: string; state: "live" | "paused" | "unreachable" }[] = []
   let rosters = 0
   const sessions = new Sessions({
     renderer: setup.renderer,
@@ -77,7 +77,8 @@ test("creates a Session, labels it, and reports it in creation order", async () 
     expect(harnessed.transport.started[0]!.request.identity.labels).toEqual({
       owner: "smolmux",
       instance: INSTANCE,
-      session: "tray",
+      app: "tray",
+      session: view.id,
     })
     // The private variables never reach the child.
     expect(harnessed.transport.started[0]!.request.env.SMOLMUX_SECRET).toBeUndefined()
@@ -327,8 +328,8 @@ test("kill asks the Companion and lets the exit remove the Session", async () =>
     await harnessed.sessions.create({ name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
     await harnessed.sessions.kill("tray")
     expect(harnessed.companion.killed).toEqual([`smolmux-${INSTANCE}-tray`])
-    // The roster still holds it: the Companion's Exit is what removes it.
-    expect(harnessed.sessions.list().map((session) => session.name)).toEqual(["tray"])
+    // Kill waits for confirmed absence even when the transport sent no Exit.
+    expect(harnessed.sessions.list()).toEqual([])
     await expect(harnessed.sessions.kill("missing")).rejects.toThrow("no Session named missing")
   } finally {
     harnessed.close()
@@ -364,4 +365,48 @@ test("input to an unreachable Session is refused rather than dropped", async () 
   } finally {
     harnessed.close()
   }
+})
+
+test("a process started during shutdown stays tracked when termination fails", async () => {
+  const h = await harness()
+  const held = Promise.withResolvers<void>()
+  h.transport.gate = held.promise
+  const name = `smolmux-${INSTANCE}-late`
+  h.companion.add({ name })
+  h.companion.killRefuses.add(name)
+  try {
+    const creating = h.sessions.create({ name: "late", argv: [FAKE_APP], cwd: process.cwd() })
+    const result = creating.catch(error => error)
+    await waitFor(() => h.transport.started.length === 1)
+    h.sessions.seal()
+    held.resolve()
+    expect(await result).toBeInstanceOf(Error)
+    expect(h.sessions.list()).toMatchObject([{ name: "late", state: "unreachable" }])
+    expect(await h.sessions.killAll()).toEqual(["late"])
+    h.companion.killRefuses.clear()
+    expect(await h.sessions.killAll()).toEqual([])
+  } finally { held.resolve(); h.close() }
+})
+
+test("an Exit does not bypass a failed kill or the Companion release barrier", async () => {
+  const h = await harness()
+  const name = `smolmux-${INSTANCE}-quick`
+  h.companion.add({ name })
+  const originalKill = h.companion.kill.bind(h.companion)
+  try {
+    await h.sessions.create({ name: "quick", argv: [FAKE_APP], cwd: process.cwd() })
+    h.companion.kill = async () => {
+      process.kill(h.sessions.view("quick").pid!, "SIGTERM")
+      await waitFor(() => h.sessions.list().length === 0)
+      throw new Error("late kill refused")
+    }
+    await expect(h.sessions.kill("quick")).rejects.toThrow("late kill refused")
+    expect(h.sessions.list()).toEqual([])
+    const replacing = h.sessions.create({ name: "quick", argv: [FAKE_APP], cwd: process.cwd() })
+    await Bun.sleep(80)
+    expect(h.transport.started).toHaveLength(1)
+    h.companion.sessions.delete(name)
+    expect((await replacing).name).toBe("quick")
+    expect(h.transport.started).toHaveLength(2)
+  } finally { h.companion.kill = originalKill; h.close() }
 })
