@@ -4,7 +4,7 @@ import { startBridge } from "./bridge.ts"
 
 const { values } = parseArgs({
   args: Bun.argv.slice(2),
-  options: { port: { type: "string", default: "7331" } },
+  options: { port: { type: "string", default: "0" } },
   strict: true,
 })
 const port = Number(values.port)

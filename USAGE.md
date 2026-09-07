@@ -159,8 +159,8 @@ application built on the same public API. From this checkout:
 
 ```sh
 bun install --frozen-lockfile
-bun run explorer                 # open the full local URL it prints
-# bun run explorer --port 0      # choose an available port automatically
+bun run explorer                 # chooses a free port; open the full URL it prints
+# bun run explorer --port 7331   # optionally require a specific port
 ```
 
 Its Instance menu discovers answering, user-owned API sockets across configuration

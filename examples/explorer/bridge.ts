@@ -211,7 +211,7 @@ export function startBridge(options: BridgeOptions) {
   }
   const server = Bun.serve<Peer>({
     hostname: "127.0.0.1",
-    port: options.port ?? 7331,
+    port: options.port ?? 0,
     maxRequestBodySize: 4096,
     fetch(request, server) {
       const url = new URL(request.url)

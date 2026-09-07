@@ -11,10 +11,10 @@ bun run explorer
 ```
 
 Open the **full URL printed by the command**, including its fragment. The
-default port is 7331; `bun run explorer --port 0` chooses a free port, or pass a
-specific port. Ctrl+C ends only the explorer. It does not stop or detach an
-Instance. The explorer runs on the same computer as smolmux and requires a modern
-browser. All assets, including fonts, are bundled locally.
+explorer chooses an available loopback port by default. Pass `--port 7331` to
+require a specific port instead. Ctrl+C ends only the explorer; it does not stop
+or detach an Instance. The explorer runs on the same computer as smolmux and
+requires a modern browser. All assets, including fonts, are bundled locally.
 
 The Instance menu finds live sockets under `/tmp/smolmux-<uid>` across all
 configuration directories, checking directory/socket ownership and the Instance
