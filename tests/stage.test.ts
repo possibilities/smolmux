@@ -126,7 +126,7 @@ test("a Session that leaves the Layout is hidden and keeps its size", async () =
   }
 })
 
-test("keyboard focus is the API's alone and follows the Layout", async () => {
+test("keyboard Focus can only be granted by Stage and follows the Layout", async () => {
   const stage = await harness(["tray", "reviewer"])
   try {
     stage.stage.apply({ row: [{ app: "tray", size: 26 }, { app: "reviewer" }] }, "reviewer")
@@ -274,4 +274,101 @@ test("a text Pane paints its line in the dim step", async () => {
   } finally {
     stage.close()
   }
+})
+
+test("physical clicks move Focus without resize and protect against stale applies", async () => {
+  const h = await harness(["a", "b"])
+  try {
+    const root: LayoutNode = { row: [{ app: "a", size: 40 }, { app: "b" }] }
+    const before = h.stage.apply(root, "b")
+    await h.setup.renderOnce()
+    const sizes = [...h.resizes]
+    const delivered: string[] = []
+    h.terminals.get("a")!.onData = data => delivered.push(`a:${new TextDecoder().decode(data)}`)
+    h.terminals.get("b")!.onData = data => delivered.push(`b:${new TextDecoder().decode(data)}`)
+    await h.setup.mockMouse.click(3, 3)
+    expect(h.stage.view.focus).toBe("a")
+    await h.setup.mockInput.typeText("x")
+    expect(delivered).toEqual(["a:x"])
+    expect(h.terminals.get("a")!.focused).toBe(true)
+    expect(h.terminals.get("b")!.focused).toBe(false)
+    expect(h.stage.view.panes.map(p => p.focused)).toEqual([true, false])
+    expect(h.stage.view.revision).toBe(before.revision + 1)
+    expect(h.causes.at(-1)).toBe("focus")
+    expect([...h.resizes]).toEqual(sizes)
+    expect(() => h.stage.apply(root, "b", { revision: before.revision })).toThrow("Layout has moved on")
+    await h.setup.mockMouse.click(3, 3)
+    expect(h.stage.view.revision).toBe(before.revision + 1)
+    await h.setup.mockMouse.click(50, 3)
+    expect(h.stage.view.focus).toBe("b")
+    await h.setup.mockInput.typeText("y")
+    expect(delivered).toEqual(["a:x", "b:y"])
+  } finally { h.close() }
+})
+
+test("api and never policies preserve mouse delivery but govern keyboard Focus", async () => {
+  const h = await harness(["a", "b"])
+  try {
+    for (const focusMode of ["api", "never"] as const) {
+      const root: LayoutNode = { row: [{ app: "a", focusMode, size: 40 }, { app: "b" }] }
+      h.stage.apply(root, "b")
+      const reports: string[] = []
+      h.terminals.get("a")!.write("\x1b[?1000h\x1b[?1006h")
+      h.terminals.get("a")!.onData = data => reports.push(new TextDecoder().decode(data))
+      await h.setup.renderOnce()
+      await h.setup.mockMouse.click(3, 3)
+      expect(reports.some(report => report.startsWith("\x1b[<0;") && report.endsWith("M"))).toBe(true)
+      expect(h.stage.view.focus).toBe("b")
+      if (focusMode === "api") {
+        h.stage.apply(root, "a")
+        expect(h.terminals.get("a")!.focused).toBe(true)
+      } else {
+        const before = h.stage.view
+        expect(() => h.stage.apply(root, "a")).toThrow("focusMode is never")
+        expect(h.stage.view).toEqual(before)
+      }
+    }
+    h.stage.apply({ app: "a" }, "a")
+    h.stage.apply({ app: "a", focusMode: "never" }, undefined)
+    expect(h.stage.view.focus).toBeNull()
+    expect(h.terminals.get("a")!.focused).toBe(false)
+  } finally { h.close() }
+})
+
+test("targeted mouse, right clicks, scrolling and divider gestures leave Focus alone", async () => {
+  const { MouseEvent } = await import("@opentui/core")
+  const h = await harness(["a", "b"])
+  try {
+    h.stage.apply({ row: [{ app: "a", size: 40 }, { app: "b" }] }, "b")
+    await h.setup.renderOnce()
+    const a = h.terminals.get("a")!
+    a.processTargetedMouseEvent(new MouseEvent(a, {
+      type: "down", button: 0, x: 3, y: 3, modifiers: { shift: false, alt: false, ctrl: false },
+    }))
+    expect(h.stage.view.focus).toBe("b")
+    await h.setup.mockMouse.click(3, 3, 2)
+    await h.setup.mockMouse.scroll(3, 3, "down")
+    await h.setup.mockMouse.drag(40, 3, 44, 3)
+    expect(h.stage.view.focus).toBe("b")
+    expect(h.causes).not.toContain("focus")
+  } finally { h.close() }
+})
+
+test("selection drags do not move Focus into a neighbouring Pane", async () => {
+  const h = await harness(["a", "b"])
+  try {
+    h.stage.apply({ row: [{ app: "a", size: 40 }, { app: "b" }] }, "b")
+    h.terminals.get("a")!.write("select this text")
+    await h.setup.renderOnce()
+    await h.setup.mockMouse.drag(1, 0, 50, 0)
+    expect(h.stage.view.focus).toBe("a")
+    expect(h.causes.filter(cause => cause === "focus")).toHaveLength(1)
+    // The same physical click path works when the child owns mouse reporting.
+    h.terminals.get("b")!.write("\x1b[?1000h\x1b[?1006h")
+    const reports: string[] = []
+    h.terminals.get("b")!.onData = data => reports.push(new TextDecoder().decode(data))
+    await h.setup.mockMouse.click(50, 3)
+    expect(h.stage.view.focus).toBe("b")
+    expect(reports.some(report => report.startsWith("\x1b[<0;") && report.endsWith("M"))).toBe(true)
+  } finally { h.close() }
 })

@@ -955,6 +955,15 @@
               "pattern": "^[a-z][a-z0-9_-]{0,31}$",
               "description": "App name: [a-z][a-z0-9_-]{0,31}"
             },
+            "focusMode": {
+              "description": "Keyboard Focus policy: click (default) permits clicks and API; api permits API only; never refuses both. Targeted app.input is independent.",
+              "type": "string",
+              "enum": [
+                "click",
+                "api",
+                "never"
+              ]
+            },
             "size": {
               "description": "Fixed columns in a row, rows in a column; omitted takes the remainder",
               "type": "integer",
@@ -1363,7 +1372,7 @@
                               "type": "integer",
                               "minimum": 0,
                               "maximum": 9007199254740991,
-                              "description": "Increments whenever the tree changes, by an apply or a divider drag; pass it back to layout.apply to refuse a stale write"
+                              "description": "Increments on every apply, divider drag, or click Focus change; pass it back to layout.apply to refuse a stale write"
                             },
                             "visible": {
                               "type": "array",
@@ -1862,7 +1871,7 @@
                       "type": "integer",
                       "minimum": 0,
                       "maximum": 9007199254740991,
-                      "description": "Increments whenever the tree changes, by an apply or a divider drag; pass it back to layout.apply to refuse a stale write"
+                      "description": "Increments on every apply, divider drag, or click Focus change; pass it back to layout.apply to refuse a stale write"
                     },
                     "visible": {
                       "type": "array",
@@ -3097,7 +3106,7 @@
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 9007199254740991,
-                  "description": "Increments whenever the tree changes, by an apply or a divider drag; pass it back to layout.apply to refuse a stale write"
+                  "description": "Increments on every apply, divider drag, or click Focus change; pass it back to layout.apply to refuse a stale write"
                 },
                 "visible": {
                   "type": "array",
@@ -3265,7 +3274,7 @@
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 9007199254740991,
-                  "description": "Increments whenever the tree changes, by an apply or a divider drag; pass it back to layout.apply to refuse a stale write"
+                  "description": "Increments on every apply, divider drag, or click Focus change; pass it back to layout.apply to refuse a stale write"
                 },
                 "visible": {
                   "type": "array",
@@ -4369,7 +4378,7 @@
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 9007199254740991,
-                  "description": "Increments whenever the tree changes, by an apply or a divider drag; pass it back to layout.apply to refuse a stale write"
+                  "description": "Increments on every apply, divider drag, or click Focus change; pass it back to layout.apply to refuse a stale write"
                 },
                 "visible": {
                   "type": "array",
@@ -4733,7 +4742,8 @@
               "enum": [
                 "apply",
                 "drag",
-                "resize"
+                "resize",
+                "focus"
               ]
             },
             "instanceId": {
@@ -4771,7 +4781,7 @@
         "data"
       ],
       "additionalProperties": false,
-      "description": "Current state: Layout after an apply, divider drag, or Stage resize, with logical visibility and App views."
+      "description": "Current state: Layout after an apply, divider drag, click Focus change, or Stage resize, with logical visibility and App views."
     },
     "stage.changed": {
       "type": "object",

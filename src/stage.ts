@@ -23,7 +23,7 @@ export type StageOptions = {
   renderer: CliRenderer
   panes: PaneSource
   theme: FxnkThemeResolution
-  onChanged: (cause: "apply" | "drag" | "resize") => void
+  onChanged: (cause: "apply" | "drag" | "resize" | "focus") => void
 }
 
 type TextPane = { box: BoxRenderable; label: TextRenderable; text: string }
@@ -45,7 +45,7 @@ export class Stage {
   private readonly onChanged: StageOptions["onChanged"]
   private theme: FxnkThemeResolution
   private tree: LayoutNode | null = null
-  /** Bumped by every change to the tree, so a caller can refuse a stale write. */
+  /** Bumped by applies, divider drags and click Focus changes to guard stale writes. */
   private treeRevision = 0
   private visible: string[] = []
   private fitted: FittedLayout = { leaves: [], dividers: [] }
@@ -114,6 +114,9 @@ export class Stage {
     const named = layoutApps(root)
     if (new Set(named).size !== named.length) throw new ApiFailure("invalid_params", "an App may appear in only one Pane")
     if (options.visible && (new Set(nextVisible).size !== nextVisible.length || named.some((name) => !nextVisible.includes(name)))) throw new ApiFailure("invalid_params", "visible must be unique and include every App in the tree")
+    if (focus != null && focusModeFor(root, focus) === "never") {
+      throw new ApiFailure("invalid_params", `App ${focus} cannot receive Focus: focusMode is never`)
+    }
     const previousTree = this.tree
     const previousFocus = this.focusName
     this.tree = root
@@ -182,6 +185,8 @@ export class Stage {
         placed.add(leaf.node.app)
         if (terminal.parent !== this.root) this.root.add(terminal)
         placeAt(terminal, leaf.rect)
+        const terminalName = leaf.node.app
+        terminal.onFocusRequest = () => this.focusFromClick(terminalName)
         terminal.visible = true
         shown.push(leaf.node.app)
         continue
@@ -198,7 +203,7 @@ export class Stage {
     for (const name of new Set([...this.shown, ...layoutApps(this.tree)])) {
       if (shownSet.has(name)) continue
       const terminal = this.panes.terminalFor(name)
-      if (terminal) { terminal.visible = false; if (terminal.focused) terminal.blur() }
+      if (terminal) { terminal.onFocusRequest = null; terminal.visible = false; if (terminal.focused) terminal.blur() }
     }
     for (const [path, pane] of this.textPanes) {
       if (liveText.has(path)) continue
@@ -307,15 +312,18 @@ export class Stage {
     }
   }
 
-  /**
-   * Keyboard focus is the API's alone: a click forwards its mouse report and
-   * moves nothing. A focused Session that leaves the screen takes the
-   * keyboard with it, and keys go nowhere until the next apply.
-   */
+  private focusFromClick(name: string): void {
+    if (this.drag || !this.shown.includes(name) || focusModeFor(this.tree, name) !== "click" || this.focusName === name) return
+    this.focusName = name
+    this.applyFocus()
+    this.treeRevision += 1
+    this.onChanged("focus")
+  }
+
   private applyFocus(): void {
+    // Focus remains intended while starting or squeezed; a never leaf clears it.
+    if (this.focusName !== null && (!layoutApps(this.tree).includes(this.focusName) || focusModeFor(this.tree, this.focusName) === "never")) this.focusName = null
     const focused = this.focusName !== null && this.shown.includes(this.focusName) ? this.focusName : null
-    // Focus is a Layout intention, even before an App starts or while squeezed.
-    if (this.focusName !== null && !layoutApps(this.tree).includes(this.focusName)) this.focusName = null
     for (const name of this.shown) {
       const terminal = this.panes.terminalFor(name)
       if (!terminal) continue
@@ -385,3 +393,13 @@ function placeAt(renderable: { position: unknown; left: unknown; top: unknown; w
   target.height = rect.rows
 }
 
+function focusModeFor(root: LayoutNode | null, name: string): "click" | "api" | "never" | null {
+  if (!root) return null
+  if ("app" in root) return root.app === name ? root.focusMode ?? "click" : null
+  if ("text" in root) return null
+  for (const child of "row" in root ? root.row : root.column) {
+    const mode = focusModeFor(child, name)
+    if (mode !== null) return mode
+  }
+  return null
+}

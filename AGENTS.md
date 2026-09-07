@@ -23,11 +23,12 @@
   help surface, no switching key, no toggle. `config.toml` holds `[keys]`
   with `prefix` and `detach` and nothing else — that grammar is deliberately
   shared with Herdr's, but do not mention Herdr in user-facing text.
-- **Focus is the API's alone.** `PaneTerminalRenderable` overrides OpenTUI's
-  focus so a left mouse-down forwards its mouse report and moves nothing;
-  only `Stage.applyFocus` may grant it, through `takeFocus`. A keyboard that
-  follows the pointer is one a program driving the Layout cannot reason
-  about.
+- **Stage owns Focus.** App leaves default to `focusMode: "click"`; physical
+  left mouse-down requests Focus through Stage. `api` permits only API Focus,
+  and `never` refuses both. Only `Stage.applyFocus` may grant it through
+  `takeFocus`. Targeted `app.input`, including mouse reports, never moves Focus.
+  A click that changes Focus increments Revision and publishes `layout.changed`
+  with cause `focus`, without refitting or running hidden policies.
 - Applying a Layout must mutate only what moved. Every Pane is absolutely
   positioned at the rectangle `layout.ts` computed, so one apply is one
   layout pass; a Pane whose rectangle is unchanged is not resized, so its
@@ -68,8 +69,8 @@
   none. The first `layout.apply` takes ownership and the Runtime never
   composes another. Without this a human attaching to an Instance nobody has
   arranged reads "no sessions" while three are running.
-- The Layout carries a revision, moved on by every apply and every divider
-  drag. `layout.apply` with an older revision is refused as a conflict so a
+- The Layout carries a revision, moved on by every apply, every divider
+  drag, and every click Focus change. `layout.apply` with an older revision is refused as a conflict so a
   human's drag is never silently undone; omitting it writes unconditionally.
   The guard holds in both directions: a drag whose tree moved under it
   re-baselines on what the apply wrote instead of putting the old tree back.

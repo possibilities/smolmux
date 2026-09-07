@@ -47,8 +47,9 @@ moves.
 _Avoid_: fallback, empty state (that is the text it draws with no Apps),
 initial layout.
 
-**Revision** — the counter the Layout carries, moved on by every apply and
-every divider drag. A caller passes back the revision its tree was built from
+**Revision** — the counter the Layout carries, moved on by every apply,
+every divider drag, and every click that changes Focus. A caller passes back
+the revision its tree was built from
 and a stale write is refused, so a human's drag is never silently undone by a
 read-modify-write that crossed it.
 _Avoid_: version, generation, etag, sequence.
@@ -59,7 +60,8 @@ covers stay the terminal's own canvas.
 _Avoid_: screen, canvas, window, viewport.
 
 **Focus** — the App leaf intended to receive the keyboard, named by `layout.apply`
-and moved by nothing else. It remains intended while starting or squeezed,
+or a physical left click, subject to the App leaf’s `focusMode`. It remains
+intended while starting or squeezed,
 but receives input only while shown; leaving the tree clears it.
 _Avoid_: active pane, selection, current.
 

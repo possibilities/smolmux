@@ -286,14 +286,19 @@ await client.request("layout.apply", {
   root: { row: [
     { column: [{ text: "Tools", size: 2 }, { app: "files" }], size: 26, min: 20 },
     { app: "shell", min: 30 },
-    { app: "metrics", size: 40, min: 20 },
+    { app: "metrics", focusMode: "never", size: 40, min: 20 },
   ] },
   visible: ["files", "shell", "metrics"], focus: "shell",
 })
 ```
 
-Only the API moves Focus. Human clicks and API mouse input forward reports
-without moving the keyboard. Explicit input names its own target and does not
+Physical left mouse-down takes Focus by default. An App leaf can specify
+`focusMode: "api"` to accept Focus only from `layout.apply`, or
+`focusMode: "never"` to refuse keyboard Focus entirely. For example,
+`{ app: "metrics", focusMode: "never" }` remains mouse-interactive without
+receiving typing Focus. An explicit API Focus request for a `never` leaf is
+`invalid_params`; changing the focused leaf to `never` with omitted focus clears
+Focus. API mouse input forwards reports without moving the keyboard. Explicit input names its own target and does not
 require Focus. A requested Focus remains associated with a leaf while it awaits
 startup or is squeezed out; keyboard delivery resumes when it is shown. Leaving
 the tree clears Focus. `focus: null` clears it explicitly.
@@ -321,6 +326,11 @@ await client.request("layout.apply", {
 
 A `conflict` means something changed after your read. Read again and recompute;
 repeating the old tree with a new revision would overwrite the human's intent.
+Clicks that change Focus advance Revision and publish `layout.changed` with
+`cause: "focus"`; they do not resize Panes or change Visibility. All attached
+Clients share this Focus. Callers requiring the former API-only behavior must
+set `focusMode: "api"` on their App leaves.
+
 Listen for `layout.changed` with `cause: "drag"` to incorporate new size wishes
 into your application's state. Omit revision only when intentionally replacing
 the whole Layout unconditionally. A rejected or undrawable Layout changes no

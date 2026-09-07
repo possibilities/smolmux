@@ -69,7 +69,7 @@ const sizedLeaf = {
 export type LayoutNode =
   | { row: LayoutNode[]; size?: number | undefined; min?: number | undefined }
   | { column: LayoutNode[]; size?: number | undefined; min?: number | undefined }
-  | { app: string; size?: number | undefined; min?: number | undefined }
+  | { app: string; focusMode?: "click" | "api" | "never" | undefined; size?: number | undefined; min?: number | undefined }
   | { text: string; size?: number | undefined; min?: number | undefined }
 
 /**
@@ -84,7 +84,7 @@ export const layoutNodeSchema: z.ZodType<LayoutNode, LayoutNode> = z.lazy(() =>
   z.union([
     z.object({ row: z.array(layoutNodeSchema).min(1), ...sizedLeaf }).strict(),
     z.object({ column: z.array(layoutNodeSchema).min(1), ...sizedLeaf }).strict(),
-    z.object({ app: appName, ...sizedLeaf }).strict(),
+    z.object({ app: appName, focusMode: z.enum(["click", "api", "never"]).optional().describe("Keyboard Focus policy: click (default) permits clicks and API; api permits API only; never refuses both. Targeted app.input is independent."), ...sizedLeaf }).strict(),
     z.object({ text: z.string().max(200), ...sizedLeaf }).strict(),
   ]),
 )
@@ -135,7 +135,7 @@ export const layoutViewSchema = z.object({
   revision: z
     .int()
     .min(0)
-    .describe("Increments whenever the tree changes, by an apply or a divider drag; pass it back to layout.apply to refuse a stale write"),
+    .describe("Increments on every apply, divider drag, or click Focus change; pass it back to layout.apply to refuse a stale write"),
   visible: z.array(appName).describe("Complete logical visibility set committed with the tree"),
   root: layoutNodeSchema.or(NONE).describe("The applied tree with sizes as they stand after drags"),
   focus: appName.or(NONE).describe("The App the keyboard goes to"),
@@ -355,7 +355,7 @@ export const METHODS = {
     result: empty,
   },
   "layout.apply": {
-    description: "Commit the tree, logical visible set and optional Focus under a Revision guard. Every App in the tree must be visible; extra visible Apps may be omitted by a caller's fitting. Only a successful commit schedules process policy transitions, which complete asynchronously through App state/events.",
+    description: "Commit the tree, logical visible set and optional Focus under a Revision guard. App leaves default to click Focus; api restricts Focus to this method and never rejects explicit Focus with invalid_params. Every App in the tree must be visible; extra visible Apps may be omitted by a caller's fitting. Only a successful commit schedules process policy transitions, which complete asynchronously through App state/events.",
     params: z.object({ root: layoutNodeSchema.nullable(), visible: z.array(appName), focus: appName.nullable().optional(), revision: z.int().min(0).optional() }).strict(),
     result: layoutViewSchema,
   },
@@ -394,8 +394,8 @@ export const EVENTS = {
     data: z.object({ name: appName, sessionId: z.string().uuid(), title: z.string() }),
   },
   "layout.changed": {
-    description: "Current state: Layout after an apply, divider drag, or Stage resize, with logical visibility and App views.",
-    data: z.object({ layout: layoutViewSchema, apps: z.array(appViewSchema), cause: z.enum(["apply", "drag", "resize"]) }),
+    description: "Current state: Layout after an apply, divider drag, click Focus change, or Stage resize, with logical visibility and App views.",
+    data: z.object({ layout: layoutViewSchema, apps: z.array(appViewSchema), cause: z.enum(["apply", "drag", "resize", "focus"]) }),
   },
   "stage.changed": { description: "Current state: physical Stage size changed.", data: stageSchema },
   "theme.changed": { description: "Current state: resolved fxnk theme changed.", data: z.object({ theme }) },

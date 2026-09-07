@@ -150,3 +150,13 @@ test("initial native viewport allocation is bounded before Session creation", ()
   expect(create.safeParse({...base, cols: 4096, rows: 65}).success).toBe(false);
   expect(create.safeParse({...base, cols: 65535, rows: 65535}).success).toBe(false);
 });
+
+
+test("Focus policy belongs only to App leaves and rejects unknown modes", () => {
+  for (const focusMode of ["click", "api", "never"]) {
+    expect(layoutNodeSchema.safeParse({ app: "shell", focusMode }).success).toBe(true)
+    expect(layoutNodeSchema.safeParse({ text: "label", focusMode }).success).toBe(false)
+    expect(layoutNodeSchema.safeParse({ row: [{ app: "shell" }], focusMode }).success).toBe(false)
+  }
+  expect(layoutNodeSchema.safeParse({ app: "shell", focusMode: "hover" }).success).toBe(false)
+})

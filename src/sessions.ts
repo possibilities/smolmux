@@ -314,7 +314,7 @@ class Session {
         this.terminal.handlePaste(new PasteEvent(new TextEncoder().encode(event.paste)))
       } else if ("mouse" in event) {
         const delivery = mouseDeliveryFor(event.mouse, origin as PaneOrigin)
-        this.terminal.processMouseEvent(new MouseEvent(this.terminal, delivery))
+        this.terminal.processTargetedMouseEvent(new MouseEvent(this.terminal, delivery))
       } else {
         this.terminal.handleKeyPress(keyEventFor(event))
       }

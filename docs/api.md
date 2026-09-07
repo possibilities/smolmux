@@ -232,9 +232,22 @@ Session; reveal starts a fresh UUID. Pause retains the Session until resume.
 Focus names an App leaf or is cleared with null. Omitted focus keeps the
 previous intention if its leaf remains in the tree. A missing execution or
 squeezed leaf retains the intention but cannot take physical keyboard input.
-A name absent from the tree becomes null. Clicks never change Focus.
+A name absent from the tree becomes null. App leaves accept
+`focusMode: "click" | "api" | "never"`, defaulting to `"click"`:
 
-Revision advances on every apply and divider drag. A supplied revision unequal
+- `click`: physical left mouse-down takes Focus; the API can also set it.
+- `api`: only the API can set Focus; physical clicks still deliver mouse input.
+- `never`: neither clicks nor the API can grant keyboard Focus. Explicitly
+  requesting this leaf as Focus returns `invalid_params` without changing the
+  Layout. Changing the current leaf to `never` with omitted focus clears Focus.
+
+Mouse interaction and selection remain available in all modes. Targeted
+`app.input` remains independent of Focus, including synthetic mouse input.
+Right clicks, scrolling, and divider drags do not move Focus. A left mouse-down
+starting text selection takes Focus under `click`, before the drag.
+
+Revision advances on every apply, divider drag, and physical click that changes
+Focus. Clicking the already focused Pane does not advance it. A supplied revision unequal
 to the current revision returns `conflict`; omit for unconditional replacement.
 Resize refits without moving Revision. Preserve returned tree sizes after drags.
 Only moved rectangles are resized.
@@ -321,7 +334,7 @@ Every event data includes `{instanceId:string,generation:1,sequence:number}`.
 | --- | --- | --- |
 | `apps.changed` | current state | `apps:AppView[]`, `availability`, `reason`: complete/partial declaration roster |
 | `app.state` | current state | `app:AppView`: replace this complete App view |
-| `layout.changed` | current state | `layout:LayoutView`, `apps:AppView[]`, `cause:"apply"|"drag"|"resize"` |
+| `layout.changed` | current state | `layout:LayoutView`, `apps:AppView[]`, `cause:"apply"|"drag"|"resize"|"focus"` |
 | `stage.changed` | current state | `cols`, `rows` |
 | `theme.changed` | current state | `theme:"dark"|"light"` |
 | `state.invalidated` | current state | `reason`: replace observation with another snapshot |

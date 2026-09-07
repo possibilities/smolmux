@@ -1,5 +1,6 @@
 import {
   type CliRenderer,
+  type MouseEvent,
   type EmbeddedTerminalOptions,
   EmbeddedTerminalRenderable,
   type KittyKeyboardOptions,
@@ -37,10 +38,8 @@ export const HOST_KEYBOARD_PROTOCOL = {
 /**
  * One Session's screen: a libghostty emulator in a rectangle of the stage.
  *
- * Focus is the API's. OpenTUI's embedded terminal takes keyboard focus on a
- * left mouse-down; here a click forwards the mouse report and moves nothing,
- * because a keyboard that follows the pointer is one a program driving the
- * Layout cannot reason about.
+ * Stage grants keyboard Focus according to the Layout leaf policy. Physical
+ * left mouse-down requests Focus; targeted API mouse input never does.
  *
  * Selection composes with the Session's own mouse handling: without mouse
  * reporting, OpenTUI owns an ordinary drag; with it, the Session owns the
@@ -55,6 +54,7 @@ export class PaneTerminalRenderable extends EmbeddedTerminalRenderable {
   private cursorPositionEstablished = false
   private selectionGesture: Selection | null = null
   private selectionActivated = false
+  public onFocusRequest: (() => void) | null = null
   private focusPermitted = false
   private scratch: OptimizedBuffer | null = null
 
@@ -70,7 +70,17 @@ export class PaneTerminalRenderable extends EmbeddedTerminalRenderable {
     })
   }
 
-  /** The one way keyboard focus reaches a Pane: the stage, on the API's word. */
+  public override processMouseEvent(event: MouseEvent): void {
+    if (event.type === "down" && event.button === 0 && !event.isDragging) this.onFocusRequest?.()
+    super.processMouseEvent(event)
+  }
+
+  /** Explicitly targeted API input must not change human Focus. */
+  public processTargetedMouseEvent(event: MouseEvent): void {
+    super.processMouseEvent(event)
+  }
+
+  /** The one way keyboard Focus reaches a Pane: Stage grants it. */
   public takeFocus(): void {
     this.focusPermitted = true
     try {
