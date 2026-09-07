@@ -34,7 +34,11 @@ in the browser, and never create or modify a real Instance.
 - The App list supports keyboard selection, search and on-Stage/hidden filters.
   **Off Stage** means logically visible but without fitted cells; it is different
   from hidden. Paused, stopped, exited, failed and unreachable Apps remain listed.
-- The inspector shows plain-text Captures. **Recent history** holds up to 200
+- The faces fit the complete terminal grid, including its last column. The
+  inspector fits the full width and reserves room for scrolling. **Expand
+  terminal** offers an overview and your configured **Font size**, plus **Copy
+  text**. Box drawing is drawn to cell edges so solid borders remain continuous.
+- The inspector shows styled Captures. **Recent history** holds up to 200 plain-text
   preceding lines; **Return to live** resumes screen updates. An unreachable
   Session is explicitly labeled as its last known screen. A stopped or exited
   App with no Session has no retained Capture.
@@ -70,14 +74,35 @@ after a 120 ms debounce, carrying Session UUIDs. Replacement and removal retire
 old Captures. A lost connection clears observation; reconnect subscribes and
 reads a new atomic projection. Invalidated projections are resnapshotted.
 Navigation and history requests are not replayed after connection loss.
+Output refreshes shown and hidden terminals; bursts coalesce before Capture and
+again at the next animation frame. The latest screen replaces the previous one
+without resetting the camera or App selection. History is deliberately held
+until **Return to live**; the 3D faces continue observing live output.
 
 Three.js supplies the camera, Stage structure and physical depth. CSS 3D faces
-keep terminal text available without turning it into an image. The 3D view has
+hold canvases rendered from Ghostty's WebAssembly VT engine. The terminal keeps
+its original cell dimensions and scales into the face without resizing the
+Session. SGR-styled viewport rows preserve indexed/default colors and attributes;
+older running Runtimes and Captures above the styled byte budget provide plain
+text instead. New Runtimes supply styles after updating smolmux; the explorer
+never restarts a running Instance. Accessible text accompanies every canvas.
+The 3D view has
 a keyboard-accessible list and inspector, responds to narrow screens, honors
 reduced motion, caps pixel density and frame rate, and stops drawing when the
 browser page is hidden. Without WebGL, the CSS 3D terminal faces and all controls
 still work. Very large rosters can make the scene dense; use search and the
 inspector to navigate them.
+
+At launch, Ghostty's `+show-config --changes-only=false` resolves its own config
+files, themes and overrides. Only appearance fields reach the browser: regular,
+bold and italic font families, point size, foreground/background, palette, cursor
+colors/shape, and cell width/height/baseline adjustments. Fonts are used from this
+computer with bundled IBM Plex Mono as fallback. No Ghostty settings are modified.
+Restart the explorer after changing Ghostty settings. **Appearance** chooses
+Ghostty (the default), system, light or dark for the surrounding UI; terminal
+colors stay faithful to the terminal settings. The browser remembers that choice
+for the current origin. Native window effects, custom shaders, font features and
+cursor animations are not replicated by the browser renderer.
 
 The explorer is an example application, not a smolmux Client: it does not attach
 a physical terminal or become the sizing owner. Its private browser messages

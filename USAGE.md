@@ -170,6 +170,15 @@ in the list, including stopped, paused, exited, failed and unreachable Apps.
 Selecting an App reads its terminal Capture and recent history without changing
 Focus; the activity strip counts observed output events, not CPU or process work.
 
+Ghostty WebAssembly renders complete terminal cell grids in the 3D faces and
+width-fitted inspector. **Expand terminal** offers fit and configured font-size
+views, with scrollbars outside the content. Output refreshes for shown and hidden
+Apps in debounced batches; inspection and camera position stay in place.
+At launch the explorer reads Ghostty's resolved font, point size, colors, palette,
+cursor shape and cell adjustments. It uses installed fonts locally, with bundled
+IBM Plex Mono as fallback. **Appearance** selects Ghostty, system, light or dark
+for the surrounding interface without changing the terminal palette.
+
 **Focus on Stage** preserves the Layout and visible set. **Reveal beside the
 Layout** adds an App without hiding any other App, and may resume or start it
 according to its hidden policy. Both actions check the Runtime lifetime and
@@ -479,9 +488,13 @@ retrying a mutating command: the outcome may already have happened.
 ## Read screens and history
 
 `app.capture({name, sessionId?, scrollback?})` returns `lines`, `screen_start`,
-`cols`, `rows`, `cursor`, `title`, `state` and the Session UUID. Lines have trailing
+`cols`, `rows`, `cursor`, `title`, `state`, optional `ansi`, and the Session UUID. Lines have trailing
 blanks trimmed. With history, `lines.slice(screen_start)` is the current viewport;
 the cursor remains viewport-relative. Request up to 10,000 history lines.
+`ansi` has exactly `rows` padded, SGR-styled viewport rows, retaining default,
+indexed and RGB colors. It contains no history or other terminal controls.
+Use `lines` when an older Runtime omits it or when the 512 KiB encoded styled
+viewport / 3 MiB combined Capture budget omits it. The plain Capture is retained.
 
 Capture works off-screen, paused, and with a lost Companion transport. An
 `unreachable` capture is last-known evidence, not a fresh response from the
@@ -489,9 +502,9 @@ process. Stop-on-hide, natural exit and remove release the emulator; capture
 then returns `not_running` or `not_found`. Save any content you need before
 ending that execution; smolmux is not an archive.
 
-History comes from the emulator with no Companion round trip. Measured on the
-current implementation, a visible screen takes about 0.4 ms and 10,000 lines
-about 20 ms. Older lines may have fallen out of bounded history. Identical blank
+History comes from the emulator with no Companion round trip; styles are read
+once from the restored viewport, not once per history page. Older lines may have
+fallen out of bounded history. Identical blank
 pages can collapse at page overlaps. Companion Restore loses approximately one
 screenful immediately above the viewport per reattach at the pinned build;
 the viewport itself survives. Local Apps have no Restore or recovery history.

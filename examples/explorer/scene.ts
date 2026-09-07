@@ -2,6 +2,9 @@ import * as THREE from "three"
 import { OrbitControls } from "three/addons/controls/OrbitControls.js"
 import { CSS3DObject, CSS3DRenderer } from "three/addons/renderers/CSS3DRenderer.js"
 import type { AppView, Capture, InstanceStatus, PaneGeometry } from "../../src/protocol.ts"
+import type { Ghostty } from "ghostty-web"
+import type { TerminalAppearance } from "./appearance.ts"
+import { TerminalView } from "./terminal-view.ts"
 
 type Card = {
   object: CSS3DObject
@@ -9,7 +12,7 @@ type Card = {
   edge: THREE.LineSegments
   tether: THREE.Line
   element: HTMLButtonElement
-  content: HTMLPreElement
+  content: TerminalView
   title: HTMLElement
   status: HTMLElement
   foot: HTMLElement
@@ -29,7 +32,7 @@ export const toneOf = (app: AppView) =>
       : "shown"
 export const positionOf = (app: AppView) => (!app.visible ? "Hidden" : app.shown ? "On Stage" : "Off Stage")
 
-/** Live terminal faces remain DOM text; WebGL supplies depth, structure and the Stage. */
+/** Ghostty terminal canvases occupy CSS 3D faces; WebGL supplies the Stage and depth. */
 export class InstanceScene {
   private readonly scene = new THREE.Scene()
   private readonly camera = new THREE.PerspectiveCamera(38, 1, 0.1, 250)
@@ -51,10 +54,13 @@ export class InstanceScene {
   private targetLook = new THREE.Vector3(0, -1, 1)
   private flying = true
   private disposed = false
+  private dark = false
 
   constructor(
     private readonly container: HTMLElement,
     private readonly select: (name: string) => void,
+    private readonly engine: Ghostty,
+    private readonly appearance: TerminalAppearance,
   ) {
     let renderer: THREE.WebGLRenderer | null = null
     try {
@@ -155,7 +161,7 @@ export class InstanceScene {
       const card = this.cards.get(app.name) ?? this.createCard(app)
       if (card.sessionId !== (app.session?.id ?? null)) {
         card.sessionId = app.session?.id ?? null
-        card.content.textContent = app.session ? "Waiting for terminal Capture…" : "No current Session"
+        card.content.setMessage(app.session ? "Waiting for terminal Capture…" : "No current Session")
       }
       card.element.dataset.tone = toneOf(app)
       card.title.textContent = app.name
@@ -164,8 +170,7 @@ export class InstanceScene {
       card.body.material.color.set(toneOf(app) === "quiet" ? 0x7a817e : app.visible ? 0x527ca5 : 0x6c9d88)
       card.element.classList.toggle("selected", app.name === this.selected)
       if (!app.session)
-        card.content.textContent =
-          app.error ?? (app.lastExit ? `Session ended\n${app.lastExit.reason}` : `No current Session\n${app.state}`)
+        card.content.setMessage(app.error ?? (app.lastExit ? `Session ended\n${app.lastExit.reason}` : `No current Session\n${app.state}`))
     }
     this.positionCards()
   }
@@ -183,11 +188,13 @@ export class InstanceScene {
     const title = document.createElement("strong")
     const status = document.createElement("span")
     head.append(dot, title, status)
-    const content = document.createElement("pre")
-    content.textContent = "Waiting for terminal Capture…"
+    const screen = document.createElement("div")
+    screen.className = "terminal-face-screen"
+    const content = new TerminalView(screen, this.engine, this.appearance)
+    content.setMessage("Waiting for terminal Capture…")
     const foot = document.createElement("div")
     foot.className = "terminal-face-foot"
-    element.append(head, content, foot)
+    element.append(head, screen, foot)
     element.addEventListener("click", (event) => {
       if (event.detail === 0) this.select(app.name) // keyboard/assistive activation
     })
@@ -236,8 +243,7 @@ export class InstanceScene {
   capture(capture: Capture) {
     const card = this.cards.get(capture.name)
     if (!card) return
-    const lines = capture.lines.slice(capture.screen_start)
-    card.content.textContent = lines.join("\n") || "(The terminal is blank.)"
+    card.content.update(capture)
   }
 
   activity(name: string) {
@@ -261,6 +267,11 @@ export class InstanceScene {
 
   setSeparation(value: number) {
     this.separation = value
+    this.positionCards()
+  }
+
+  setDark(dark: boolean) {
+    this.dark = dark
     this.positionCards()
   }
 
@@ -289,7 +300,7 @@ export class InstanceScene {
     const base = new THREE.Mesh(
       new THREE.PlaneGeometry(width + 0.6, height + 0.6),
       new THREE.MeshBasicMaterial({
-        color: 0xaec5d5,
+        color: this.dark ? 0x6085a1 : 0xaec5d5,
         transparent: true,
         opacity: 0.1,
         side: THREE.DoubleSide,
@@ -310,7 +321,7 @@ export class InstanceScene {
     if (hidden.length)
       this.label(`${hidden.length} beyond the Stage`, new THREE.Vector3(-9, -height / 2 - 1.55, 3), true)
     const floorY = -height / 2 - 6 - Math.max(0, Math.ceil(hidden.length / 5) - 1) * 4.5
-    const grid = new THREE.GridHelper(70, 70, 0xa5bac6, 0xc3d2da)
+    const grid = new THREE.GridHelper(70, 70, this.dark ? 0x617a91 : 0xa5bac6, this.dark ? 0x344f63 : 0xc3d2da)
     grid.position.set(0, floorY, -4)
     const materials = Array.isArray(grid.material) ? grid.material : [grid.material]
     materials.forEach((material) => {
@@ -470,6 +481,7 @@ export class InstanceScene {
   }
 
   private removeCard(card: Card) {
+    card.content.dispose()
     this.scene.remove(card.object, card.body, card.edge, card.tether)
     card.element.remove()
     for (const object of [card.body, card.edge, card.tether]) {

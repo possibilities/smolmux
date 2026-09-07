@@ -70,7 +70,8 @@ the Ramp's divider step. Dragging one changes the sized Pane beside it and
 publishes `layout.changed` with cause `drag`.
 _Avoid_: border, splitter, gutter, handle.
 
-**Capture** — an App's current Session screen as text with its cursor and title, read by
+**Capture** — an App's current Session screen as text, optional SGR-styled viewport rows,
+and its cursor and title, read by
 `app.capture` whether or not a Pane shows it, optionally with lines that
 have scrolled off the top. It composes the emulator into a buffer of smolmux's own
 rather than reading the frame a render pass drew, because a hidden Pane is

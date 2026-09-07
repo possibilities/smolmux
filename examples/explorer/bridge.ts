@@ -7,6 +7,7 @@ import { checkEventSocketOwnership } from "../../src/unix-socket.ts"
 import { discoverInstances, identify, instancePattern, socketDirectory } from "./discovery.ts"
 import { planNavigation } from "./navigation.ts"
 import type { BrowserMessage, Discovery, ExplorerMessage } from "./wire.ts"
+import { defaultAppearance, type TerminalAppearance } from "./appearance.ts"
 
 const messageSchema = z.discriminatedUnion("type", [
   z
@@ -41,7 +42,7 @@ export type Peer = {
   requests: Set<string>
 }
 
-type BridgeOptions = { assets: Map<string, Blob>; html: string; port?: number; directory?: string; token?: string }
+type BridgeOptions = { assets: Map<string, Blob>; html: string; port?: number; directory?: string; token?: string; appearance?: TerminalAppearance }
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 /** Local capability URL + exact Origin/Host checks. Only the operations above cross this bridge. */
@@ -207,7 +208,7 @@ export function startBridge(options: BridgeOptions) {
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
     "Content-Security-Policy":
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+      "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
   }
   const server = Bun.serve<Peer>({
     hostname: "127.0.0.1",
@@ -234,6 +235,10 @@ export function startBridge(options: BridgeOptions) {
           200,
           { "Content-Type": "image/svg+xml" },
         )
+      if (url.pathname === "/appearance") {
+        if (request.headers.get("authorization") !== `Bearer ${token}`) return respond("Unauthorized", 401)
+        return respond(JSON.stringify(options.appearance ?? defaultAppearance), 200, { "Content-Type": "application/json" })
+      }
       if (url.pathname === "/instances") {
         if (request.headers.get("authorization") !== `Bearer ${token}`)
           return respond("Open the full URL printed by bun run explorer.", 401)

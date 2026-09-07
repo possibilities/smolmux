@@ -8,12 +8,14 @@ import {
   type Selection,
 } from "@opentui/core"
 import { buildEmbeddedThemeSequence, type FxnkThemeResolution } from "./host-palette.ts"
+import { captureAnsi } from "./capture-ansi.ts"
 
 type PaneTerminalOptions = Omit<EmbeddedTerminalOptions, "selectable">
 
 /** A Pane's screen as text, with however much history was asked for above it. */
 export type PaneCapture = {
   lines: string[]
+  ansi?: string[]
   /** Index in `lines` where the visible screen begins. */
   screenStart: number
   columns: number
@@ -184,6 +186,7 @@ export class PaneTerminalRenderable extends EmbeddedTerminalRenderable {
     const reported = internals.lib.embeddedTerminalCursor(internals.handle)
     return {
       lines,
+      ansi: captureAnsi(this.scratch!),
       screenStart: Math.max(0, lines.length - visible.length),
       columns: width,
       rows: height,

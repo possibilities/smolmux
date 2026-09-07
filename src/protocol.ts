@@ -157,6 +157,7 @@ export const captureSchema = z.object({
   lines: z
     .array(z.string())
     .describe("One string per row, trailing blanks trimmed; history first when scrollback was asked for"),
+  ansi: z.array(z.string()).optional().describe("Styled current viewport only: exactly rows padded strings with SGR colors and attributes, each ending in reset. Default and indexed colors retain their intent. No history or other terminal controls. Omitted above 512 KiB encoded ANSI or 3 MiB combined Capture, and absent on older Runtimes; use lines when absent."),
   screen_start: z
     .int()
     .min(0)

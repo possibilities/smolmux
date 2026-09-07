@@ -3046,6 +3046,13 @@
                   },
                   "description": "One string per row, trailing blanks trimmed; history first when scrollback was asked for"
                 },
+                "ansi": {
+                  "description": "Styled current viewport only: exactly rows padded strings with SGR colors and attributes, each ending in reset. Default and indexed colors retain their intent. No history or other terminal controls. Omitted above 512 KiB encoded ANSI or 3 MiB combined Capture, and absent on older Runtimes; use lines when absent.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
                 "screen_start": {
                   "type": "integer",
                   "minimum": 0,

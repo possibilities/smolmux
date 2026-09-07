@@ -185,6 +185,7 @@ default zero. Returns:
   name: string
   sessionId: string
   lines: string[]
+  ansi?: string[]
   screen_start: number
   cols: number
   rows: number
@@ -206,6 +207,18 @@ older history can be gone, identical blank pages may collapse at overlaps,
 and the pinned Companion Restore loses roughly one screenful above the viewport
 per reattach. The viewport survives. Stop, remove and natural exit release
 history entirely. Captures are not durable archives.
+
+`ansi`, when present, is the styled **current viewport only**, with exactly
+`rows` strings padded to `cols` terminal cells. Each row contains printable text
+and SGR colors/attributes and ends in SGR reset. Default colors, ANSI palette
+indices and explicit RGB colors retain their intent; there are no cursor,
+clipboard, hyperlink, or other terminal control sequences. Use the separate
+cursor field. This is a composed screen, never a terminal byte stream.
+
+Styled rows are omitted if their JSON encoding exceeds 512 KiB or the combined
+Capture would exceed 3 MiB, preserving space under the socket's 4 MiB limit.
+They are also absent on older running Runtimes. Always use `lines` when `ansi`
+is absent. History remains plain text and never expands the styled viewport.
 
 ### `app.input`
 

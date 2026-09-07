@@ -9,7 +9,9 @@ export async function buildExplorer(): Promise<Map<string, Blob>> {
     loader: { ".woff2": "file", ".woff": "file" },
   })
   if (!result.success) throw new AggregateError(result.logs, "Explorer build failed")
-  return new Map(result.outputs.map((output) => [`/assets/${basename(output.path)}`, output]))
+  const assets = new Map<string, Blob>(result.outputs.map((output) => [`/assets/${basename(output.path)}`, output]))
+  assets.set("/assets/ghostty-vt.wasm", Bun.file(new URL(import.meta.resolve("ghostty-web/ghostty-vt.wasm"))))
+  return assets
 }
 
 if (import.meta.main) {

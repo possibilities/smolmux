@@ -5,6 +5,8 @@ import { demoCapture, demoSnapshot } from "./demo.ts"
 import { appLeaf, planNavigation } from "./navigation.ts"
 import { InstanceScene, positionOf, toneOf } from "./scene.ts"
 import type { BrowserMessage, Discovery, ExplorerMessage, Navigation } from "./wire.ts"
+import { cssFont, defaultAppearance, isDark, type TerminalAppearance } from "./appearance.ts"
+import { loadTerminalEngine, TerminalView } from "./terminal-view.ts"
 
 const element = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id)! as T
 const text = (id: string, value: string) => {
@@ -16,6 +18,15 @@ const show = (id: string, visible: boolean) => {
 const button = (id: string) => element<HTMLButtonElement>(id)
 const dialog = element<HTMLDialogElement>("instance-dialog")
 const token = location.hash.slice(1)
+const [engine, appearance] = await Promise.all([
+  loadTerminalEngine(),
+  token ? fetch("/appearance", { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(5000) })
+    .then(async response => response.ok ? await response.json() as TerminalAppearance : defaultAppearance)
+    .catch(() => defaultAppearance) : defaultAppearance,
+])
+await Promise.all([
+  document.fonts.load(`${appearance.fontSize * 96 / 72}px ${cssFont(appearance.fontFamily)}`), document.fonts.ready,
+])
 document.querySelector<HTMLAnchorElement>(".wordmark")!.href = location.href
 let snapshot: StateSnapshot | null = null
 let selection: string | null = null
@@ -38,7 +49,31 @@ const requests = new Map<
   string,
   { resolve: (message: ExplorerMessage) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
 >()
-const scene = new InstanceScene(element("viewport"), selectApp)
+const scene = new InstanceScene(element("viewport"), selectApp, engine, appearance)
+const captureView = new TerminalView(element("capture"), engine, appearance)
+const terminalDialog = element<HTMLDialogElement>("terminal-dialog")
+const expandedView = new TerminalView(element("expanded-capture"), engine, appearance)
+const appearanceMode = element<HTMLSelectElement>("appearance-mode")
+const systemTheme = matchMedia("(prefers-color-scheme: dark)")
+try { appearanceMode.value = localStorage.getItem("smolmux-appearance") ?? "terminal" } catch { /* Storage can be disabled. */ }
+if (!appearanceMode.value) appearanceMode.value = "terminal"
+function applyAppearance() {
+  const dark = appearanceMode.value === "dark" || (appearanceMode.value === "system" ? systemTheme.matches :
+    appearanceMode.value === "terminal" && isDark(appearance.background))
+  document.documentElement.dataset.theme = dark ? "dark" : "light"
+  document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')!.content = dark ? "#101820" : "#e9f0f3"
+  scene.setDark(dark)
+}
+applyAppearance()
+appearanceMode.addEventListener("change", () => {
+  try { localStorage.setItem("smolmux-appearance", appearanceMode.value) } catch { /* Optional preference. */ }
+  applyAppearance()
+})
+systemTheme.addEventListener("change", applyAppearance)
+const appearanceDescription = `${appearance.fontFamily} · ${appearance.fontSize} pt · ${appearance.theme}`
+text("appearance-note", `${appearance.fontFamily} · ${appearance.fontSize} pt`)
+element("appearance-note").title = appearance.warning ?? appearanceDescription
+text("terminal-appearance", appearanceDescription)
 
 function toast(message: string, error = false) {
   text("toast", message)
@@ -65,6 +100,11 @@ function applySnapshot(next: StateSnapshot | null) {
   const prior = snapshot
   snapshot = next
   const state = snapshot?.state
+  if (!state || !state.apps.some(app => app.name === selection)) {
+    terminalDialog.close()
+    captureView.setMessage("Choose an App to inspect its terminal.")
+    expandedView.setMessage("Choose an App to inspect its terminal.")
+  }
   for (const [name, capture] of captures)
     if (!state?.apps.some((app) => app.name === name && app.session?.id === capture.sessionId)) captures.delete(name)
   for (const name of activity.keys()) {
@@ -248,14 +288,19 @@ function renderCapture() {
   const app = currentApp()
   if (!app) return
   const capture = captureHistory?.name === app.name ? captureHistory : captures.get(app.name)
-  text(
-    "capture",
-    capture
-      ? capture.lines.join("\n") || "(The terminal is blank.)"
-      : app.session
+  if (capture) {
+    captureView.setFit("width")
+    captureView.update(capture, !!captureHistory)
+    if (terminalDialog.open) expandedView.update(capture, !!captureHistory)
+  } else {
+    const message = app.session
         ? "Waiting for terminal Capture…"
-        : `No current Session.\n\n${app.lastExit?.reason ?? (app.state === "stopped" ? "This App is stopped. Its declaration remains available." : (app.error ?? "Its terminal will appear when execution starts."))}`,
-  )
+        : `No current Session.\n\n${app.lastExit?.reason ?? (app.state === "stopped" ? "This App is stopped. Its declaration remains available." : (app.error ?? "Its terminal will appear when execution starts."))}`
+    captureView.setMessage(message)
+    expandedView.setMessage(message)
+  }
+  button("expand-capture").disabled = !capture
+  text("terminal-dialog-title", `${app.name} / ${captureHistory ? "Recent history" : "Terminal Capture"}`)
   text(
     "capture-state",
     captureHistory
@@ -624,6 +669,29 @@ button("live-button").addEventListener("click", () => {
   captureHistory = null
   renderCapture()
 })
+button("expand-capture").addEventListener("click", () => {
+  terminalDialog.showModal()
+  renderCapture()
+  expandedView.fit()
+})
+button("close-terminal").addEventListener("click", () => terminalDialog.close())
+button("terminal-fit").addEventListener("click", () => {
+  expandedView.setFit("contain")
+  button("terminal-fit").setAttribute("aria-pressed", "true")
+  button("terminal-native").setAttribute("aria-pressed", "false")
+})
+button("terminal-native").addEventListener("click", () => {
+  expandedView.setFit("native")
+  button("terminal-fit").setAttribute("aria-pressed", "false")
+  button("terminal-native").setAttribute("aria-pressed", "true")
+})
+button("copy-capture").addEventListener("click", () => {
+  const app = currentApp()
+  const capture = captureHistory ?? (app ? captures.get(app.name) : null)
+  if (capture) void navigator.clipboard.writeText(capture.lines.join("\n"))
+    .then(() => toast("Terminal text copied."))
+    .catch(() => toast("The browser could not copy terminal text.", true))
+})
 const discoveryTimer = setInterval(() => {
   if (!document.hidden) void discover().catch((error) => toast(String(error), true))
 }, 5000)
@@ -653,6 +721,9 @@ window.addEventListener("pagehide", () => {
   clearInterval(activityTimer)
   clearInterval(demoTimer)
   scene.dispose()
+  captureView.dispose()
+  expandedView.dispose()
+  systemTheme.removeEventListener("change", applyAppearance)
 })
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) location.reload()

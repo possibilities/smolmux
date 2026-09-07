@@ -3,6 +3,7 @@ import { CursorReportAdapter } from "./cursor-report-adapter.ts"
 import type { FxnkThemeResolution } from "./host-palette.ts"
 import { PaneTerminalRenderable } from "./pane-terminal.ts"
 import { ApiFailure, type Capture, type InputEvent, type PtyKind } from "./protocol.ts"
+import { boundStyledCapture } from "./capture-ansi.ts"
 import {
   isNamedKey,
   keyEventFor,
@@ -251,17 +252,18 @@ class Session {
   capture(scrollback = 0): Capture {
     const size = this.currentSize
     const screen = this.terminal.captureScreen(size.cols, size.rows, scrollback)
-    return {
+    return boundStyledCapture({
       name: this.identity.name,
       sessionId: this.identity.id,
       lines: screen.lines,
+      ansi: screen.ansi,
       screen_start: screen.screenStart,
       cols: screen.columns,
       rows: screen.rows,
       cursor: { x: screen.cursor.x, y: screen.cursor.y, visible: screen.cursor.visible },
       title: this.title,
       state: this.state === "live" ? "running" : this.state,
-    }
+    })
   }
 
   /**

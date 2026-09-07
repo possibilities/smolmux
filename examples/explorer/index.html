@@ -27,6 +27,12 @@
       <div class="connection">
         <span class="connection-dot" id="connection-dot"></span><span id="connection-text">Connecting</span>
       </div>
+      <label class="appearance-control">Appearance
+        <select id="appearance-mode" aria-label="Appearance">
+          <option value="terminal">Ghostty</option><option value="system">System</option>
+          <option value="dark">Dark</option><option value="light">Light</option>
+        </select>
+      </label>
     </header>
     <main class="workspace">
       <aside class="roster" aria-label="Apps in this Instance">
@@ -114,7 +120,10 @@
             <h3>Terminal Capture</h3>
             <span id="capture-state">Waiting</span>
           </div>
-          <pre id="capture" class="capture" tabindex="0" aria-label="Terminal Capture"></pre>
+          <div id="capture" class="capture" tabindex="0" aria-label="Terminal Capture"></div>
+          <div class="terminal-actions"><span id="appearance-note"></span>
+            <button id="expand-capture" class="text-button" aria-haspopup="dialog">Expand terminal</button>
+          </div>
           <div class="capture-controls">
             <button id="history-button" class="text-button">Recent history</button
             ><button id="live-button" class="text-button" hidden>Return to live</button><span id="capture-size"></span>
@@ -132,6 +141,18 @@
       <span id="status-summary">Looking for running Instances</span><span id="revision">Local to this computer</span>
     </footer>
     <div id="toast" class="toast" role="status" hidden></div>
+    <dialog id="terminal-dialog" class="terminal-dialog" aria-labelledby="terminal-dialog-title">
+      <div class="terminal-dialog-heading">
+        <div><h2 id="terminal-dialog-title">Terminal Capture</h2><p id="terminal-appearance"></p></div>
+        <div class="terminal-dialog-tools">
+          <button id="terminal-fit" class="secondary-button" aria-pressed="true">Fit</button>
+          <button id="terminal-native" class="secondary-button" aria-pressed="false">Font size</button>
+          <button id="copy-capture" class="secondary-button">Copy text</button>
+          <button id="close-terminal" class="icon-button" aria-label="Close terminal">×</button>
+        </div>
+      </div>
+      <div id="expanded-capture" class="expanded-capture" tabindex="0" aria-label="Expanded terminal Capture"></div>
+    </dialog>
     <dialog id="instance-dialog" aria-labelledby="instance-dialog-title">
       <div class="dialog-heading">
         <div>

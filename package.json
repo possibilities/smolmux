@@ -28,6 +28,7 @@
     "@playwright/test": "^1.63.0",
     "@types/bun": "^1.4.0",
     "@types/three": "^0.185.4",
+    "ghostty-web": "0.4.0",
     "three": "^0.185.1",
     "typescript": "^5.9.3"
   },
