@@ -614,7 +614,14 @@ export class Sessions {
         if (entry.state !== "exited" && entry.state !== "absent") throw error
       }
       const entry = await this.waitForRelease(session.identity)
-      if (this.sessions.get(session.identity.name) === session) this.remove(session, entry.exit ?? { code: null, signal: null, reason: "requested" })
+      if (this.sessions.get(session.identity.name) === session) {
+        // Discovery records also carry endedAt. Only terminal exit status
+        // belongs in Session notifications and the App's lastExit view.
+        const status = entry.exit
+          ? { code: entry.exit.code, signal: entry.exit.signal, reason: entry.exit.reason }
+          : { code: null, signal: null, reason: "requested" }
+        this.remove(session, status)
+      }
       this.pendingRelease.delete(session.identity.name)
     }
   }

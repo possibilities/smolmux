@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { createTestRenderer } from "@opentui/core/testing"
 import { fileURLToPath } from "node:url"
 import type { EventName, InstanceStatus, LayoutView, AppView } from "../src/protocol.ts"
+import type { SessionExit, TransportHandlers } from "../src/session-transport.ts"
 import { eventSocketFrameSchema } from "../src/event-schema.ts"
 import { EMPTY_LAYOUT, Runtime } from "../src/runtime.ts"
 import { sessionIdentity } from "../src/session-identity.ts"
@@ -29,7 +30,7 @@ async function harness(prepare?: (companion: FakeCompanion, transport: PtyTransp
       environment: { PATH: process.env.PATH ?? "", HOME: "/home/test" },
     },
     publish: (event, data) => {
-      expect(eventSocketFrameSchema.safeParse({ v: 2, type: "event", event, data }).success).toBe(true)
+      eventSocketFrameSchema.parse({ v: 2, type: "event", event, data })
       events.push({ event, data })
     },
   })
@@ -294,6 +295,41 @@ test("stop ends every Session, then answers, then ends the Runtime", async () =>
   } finally {
     await app.close()
   }
+})
+
+test.each([
+  { code: 0, signal: 15, reason: "requested" },
+  { code: null, signal: null, reason: "requested" },
+] satisfies SessionExit[])("stopping an adopted Session publishes only exit status when discovery wins: %j", async (status) => {
+  const identity = sessionIdentity(INSTANCE, "survivor")
+  let handlers: TransportHandlers | null = null
+  const app = await harness((companion, transport) => {
+    const entry = companion.add({ name: identity.companionName, labels: identity.labels })
+    transport.attachBehavior = () => ({
+      pid: entry.pid!, bind: (bound) => { handlers = bound },
+      write: () => {}, resize: () => {}, detach: () => {},
+    })
+    // Discovery may observe the exit record before the live transport's Exit.
+    companion.kill = async (name) => {
+      companion.killed.push(name)
+      entry.state = "exited"
+      entry.exit = { ...status, endedAt: 123456789 }
+    }
+  })
+  try {
+    expect(app.runtime.apps.view("survivor").state).toBe("running")
+    expect(await app.call<Record<string, never>>("instance.stop")).toEqual({})
+    await app.runtime.waitUntilDone()
+    const exits = app.events.filter(({ event }) => event === "session.exited")
+    expect(exits).toHaveLength(1)
+    expect(exits[0]!.data).toMatchObject({ ...status, name: "survivor", sessionId: identity.id, cause: "shutdown" })
+    expect(exits[0]!.data).not.toHaveProperty("endedAt")
+    const state = app.events.find(({ event, data }) => event === "app.state" && (data as { app: AppView }).app.lastExit)
+    expect((state!.data as { app: AppView }).app.lastExit).toEqual({ ...status, sessionId: identity.id, cause: "shutdown" })
+    // A late terminal notification must not publish the same exit twice.
+    handlers!.exit(status)
+    expect(app.events.filter(({ event }) => event === "session.exited")).toHaveLength(1)
+  } finally { await app.close() }
 })
 
 test("a signal during adoption stops before drawing into a destroyed Stage", async () => {
