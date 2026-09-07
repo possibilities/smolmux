@@ -47,6 +47,19 @@ static uint32_t get32(const unsigned char *p) { return ((uint32_t)p[0]<<24)|((ui
 static void put32(unsigned char *p, uint32_t n) { p[0]=n>>24; p[1]=n>>16; p[2]=n>>8; p[3]=n; }
 static int flag(int fd,int command,int value) { int result; do { result=fcntl(fd,command,value); } while(result<0&&errno==EINTR); return result; }
 static int nonblocking(int fd) { int f=flag(fd,F_GETFL,0); return f<0?-1:flag(fd,F_SETFL,f|O_NONBLOCK); }
+/* The private blocking boot pipe has one writer and carries only this errno.
+ * Keep the post-fork failure path async-signal-safe, including interrupted writes. */
+static void startup_failure(int fd,int error) {
+  const unsigned char *data=(const unsigned char *)&error;
+  size_t offset=0;
+  while(offset<sizeof(error)) {
+    ssize_t n=write(fd,data+offset,sizeof(error)-offset);
+    if(n<0&&errno==EINTR) continue;
+    if(n<=0) break;
+    offset+=(size_t)n;
+  }
+  _exit(127);
+}
 static void child_signal(int sig) { (void)sig; }
 static void clear(Queue *q) { while(q->first) { Frame *f=q->first; q->first=f->next; free(f); } memset(q,0,sizeof(*q)); }
 static int push(Queue *q, const void *data, size_t size) {
@@ -88,7 +101,8 @@ static int member_info(pid_t pid,Member *m) {
   char path[64],line[4096]; snprintf(path,sizeof(path),"/proc/%d/stat",pid);
   FILE *f=fopen(path,"r"); if(!f) return getsid(pid)==leader?-1:0;
   size_t length=fread(line,1,sizeof(line)-1,f); int invalid=ferror(f)||!feof(f); fclose(f);
-  if(invalid||!length) return getsid(pid)==leader?-1:0; line[length]=0;
+  if(invalid||!length) return getsid(pid)==leader?-1:0;
+  line[length]=0;
   char *p=strrchr(line,')'); if(!p) return getsid(pid)==leader?-1:0; p+=2;
   char state=*p; m->stopped=state=='T'||state=='t'; m->zombie=state=='Z';
   /* Field 3 is state; starttime is field 22. */
@@ -223,8 +237,8 @@ int main(int argc,char **argv) {
   if(leader<0) return 70;
   if(leader==0) {
     close(3); close(boot[0]); signal(SIGPIPE,SIG_DFL); signal(SIGCHLD,SIG_DFL);
-    if(chdir(argv[3])<0) { int error=errno; (void)write(boot[1],&error,sizeof(error)); _exit(127); }
-    execvp(argv[4],argv+4); int error=errno; (void)write(boot[1],&error,sizeof(error)); _exit(127);
+    if(chdir(argv[3])<0) startup_failure(boot[1],errno);
+    execvp(argv[4],argv+4); startup_failure(boot[1],errno);
   }
   close(boot[1]);
   int boot_done=0,boot_error=0; size_t boot_bytes=0;

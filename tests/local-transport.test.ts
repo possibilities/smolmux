@@ -84,10 +84,11 @@ test("natural exit delivers final output before exit and cleans up shell descend
   } finally { await owner.close() }
 })
 
-test("exec failures are startup errors, while a program may deliberately exit 127", async () => {
+test("setup and exec failures are startup errors, while a program may deliberately exit 127", async () => {
   const owner = new LocalPtyOwner({ helper, report: () => {} })
   try {
     await expect(owner.start({ ...request("missing", ""), command: ["/smolmux/no-such-command"] })).rejects.toThrow("exec failed")
+    await expect(owner.start({ ...request("missing-cwd", "exit 0"), cwd: join(directory, "no-such-directory") })).rejects.toThrow("setup or exec failed")
     const observed = listen(await owner.start(request("status", "exit 127")))
     await until(() => observed.exit !== null)
     expect(observed.exit).toEqual({ code: 127, signal: 0, reason: "natural" })
