@@ -181,6 +181,12 @@ svg {
   font-weight: 500;
   font-size: 13px;
 }
+#instance-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .instance-symbol {
   color: var(--blue);
   font-size: 20px;
