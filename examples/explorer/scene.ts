@@ -4,7 +4,8 @@ import { CSS3DObject, CSS3DRenderer } from "three/addons/renderers/CSS3DRenderer
 import type { AppView, Capture, InstanceStatus, PaneGeometry } from "../../src/protocol.ts"
 import type { Ghostty } from "ghostty-web"
 import type { TerminalAppearance } from "./appearance.ts"
-import { TerminalView } from "./terminal-view.ts"
+import { measureTerminalCells, TerminalView, type TerminalCells } from "./terminal-view.ts"
+import { stageSurface } from "./stage-surface.ts"
 
 type Card = {
   object: CSS3DObject
@@ -41,6 +42,8 @@ export class InstanceScene {
   private readonly controls: OrbitControls
   private readonly cards = new Map<string, Card>()
   private readonly structure = new THREE.Group()
+  private readonly stageObject = new CSS3DObject(document.createElement("div"))
+  private readonly cells: TerminalCells
   private readonly labelObjects: CSS3DObject[] = []
   private readonly reduced = matchMedia("(prefers-reduced-motion: reduce)")
   private readonly resizeObserver: ResizeObserver
@@ -62,6 +65,7 @@ export class InstanceScene {
     private readonly engine: Ghostty,
     private readonly appearance: TerminalAppearance,
   ) {
+    this.cells = measureTerminalCells(appearance)
     let renderer: THREE.WebGLRenderer | null = null
     try {
       renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: "low-power" })
@@ -131,7 +135,8 @@ export class InstanceScene {
     this.scene.add(new THREE.AmbientLight(0xe1efff, 2.2))
     const light = new THREE.DirectionalLight(0xffffff, 3)
     light.position.set(10, 18, 25)
-    this.scene.add(light, this.structure)
+    // Add the Stage before App faces so coplanar CSS surfaces compose in paint order.
+    this.scene.add(light, this.structure, this.stageObject)
     this.resizeObserver = new ResizeObserver(() => this.resize())
     this.resizeObserver.observe(container)
     this.animate(0)
@@ -148,9 +153,11 @@ export class InstanceScene {
     this.camera.updateProjectionMatrix()
     this.webgl?.setSize(width, height)
     this.css.setSize(width, height)
+    if (!this.spatial) this.resetCamera()
   }
 
   update(status: InstanceStatus | null) {
+    const resized = status?.stage.cols !== this.status?.stage.cols || status?.stage.rows !== this.status?.stage.rows
     this.status = status
     for (const [name, card] of this.cards)
       if (!status?.apps.some((app) => app.name === name)) {
@@ -173,6 +180,7 @@ export class InstanceScene {
         card.content.setMessage(app.error ?? (app.lastExit ? `Session ended\n${app.lastExit.reason}` : `No current Session\n${app.state}`))
     }
     this.positionCards()
+    if (resized) this.resetCamera()
   }
 
   private createCard(app: AppView): Card {
@@ -190,7 +198,7 @@ export class InstanceScene {
     head.append(dot, title, status)
     const screen = document.createElement("div")
     screen.className = "terminal-face-screen"
-    const content = new TerminalView(screen, this.engine, this.appearance)
+    const content = new TerminalView(screen, this.engine, this.appearance, this.cells)
     content.setMessage("Waiting for terminal Capture…")
     const foot = document.createElement("div")
     foot.className = "terminal-face-foot"
@@ -261,6 +269,9 @@ export class InstanceScene {
 
   setMode(spatial: boolean) {
     this.spatial = spatial
+    this.container.dataset.mode = spatial ? "spatial" : "stage"
+    this.controls.enableRotate = spatial
+    this.controls.mouseButtons.LEFT = spatial ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN
     this.positionCards()
     this.resetCamera()
   }
@@ -277,13 +288,23 @@ export class InstanceScene {
 
   resetCamera() {
     const count = this.status?.apps.filter((app) => !app.shown).length ?? 0
+    if (!this.spatial) {
+      const { width, height } = this.stageSize()
+      const top = height / 2 + 1.2
+      const bottom = count ? -height / 2 - 6 - (Math.ceil(count / 5) - 1) * 4.7 : -height / 2 - 0.4
+      const span = Math.max(width + 1, Math.min(5, count) * 6)
+      const center = (top + bottom) / 2
+      const halfFov = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))
+      const distance = Math.max((top - bottom) / 2, span / (2 * this.camera.aspect)) / halfFov * 1.08
+      // A perpendicular camera keeps every cell at the same projected scale.
+      this.targetCamera.set(0, center, distance)
+      this.targetLook.set(0, center, 0)
+      this.flying = true
+      return
+    }
     const extra = Math.max(0, Math.ceil(count / 5) - 1) * 5
     const narrow = this.container.clientWidth / Math.max(this.container.clientHeight, 1) < 0.85
-    this.targetCamera.set(
-      this.spatial ? 19 : 0,
-      this.spatial ? 11 : -1,
-      (this.spatial ? 34 : 35) + extra + (narrow ? 9 : 0),
-    )
+    this.targetCamera.set(19, 11, 34 + extra + (narrow ? 9 : 0))
     this.targetLook.set(0, -1.7 - extra / 2, 1.5)
     this.flying = true
   }
@@ -291,35 +312,22 @@ export class InstanceScene {
   private positionCards() {
     this.clearStructure()
     const state = this.status
+    this.stageObject.visible = !!state
     if (!state) return
-    const width = 18
-    const height = Math.min(14, Math.max(5, ((state.stage.rows * 2) / state.stage.cols) * width))
+    const { width, height, scale } = this.stageSize()
     const hidden = state.apps.filter((app) => !app.shown)
     const shown = state.apps.filter((app) => app.shown)
     const spread = this.spatial ? this.separation : 0
-    const base = new THREE.Mesh(
-      new THREE.PlaneGeometry(width + 0.6, height + 0.6),
-      new THREE.MeshBasicMaterial({
-        color: this.dark ? 0x6085a1 : 0xaec5d5,
-        transparent: true,
-        opacity: 0.1,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      }),
-    )
-    base.position.z = -1.05
-    this.structure.add(base)
-    this.outline(-width / 2, -height / 2, width, height, -1, 0x7b9aad, 0.6)
-    for (let i = 0; i <= 6; i++) {
-      const x = -width / 2 + (i * width) / 6
-      this.line([new THREE.Vector3(x, -height / 2, -1.02), new THREE.Vector3(x, height / 2, -1.02)], 0xabc0cc, 0.23)
-    }
+    stageSurface(state, this.appearance, this.cells, this.stageObject.element)
+    this.stageObject.scale.setScalar(scale)
+    this.outline(-width / 2, -height / 2, width, height, -0.01, 0x7b9aad, 0.6)
     this.label(
       `<strong>Stage</strong>  ${state.stage.cols} × ${state.stage.rows}`,
-      new THREE.Vector3(-width / 2, height / 2 + 0.7, -1),
+      new THREE.Vector3(-width / 2, height / 2 + 1.1, 0),
     )
     if (hidden.length)
-      this.label(`${hidden.length} beyond the Stage`, new THREE.Vector3(-9, -height / 2 - 1.55, 3), true)
+      this.label(`${hidden.length} beyond the Stage`,
+        new THREE.Vector3(-Math.min(5, hidden.length) * 3 + 0.45, -height / 2 - 1.55, this.spatial ? 3 : 0), true)
     const floorY = -height / 2 - 6 - Math.max(0, Math.ceil(hidden.length / 5) - 1) * 4.5
     const grid = new THREE.GridHelper(70, 70, this.dark ? 0x617a91 : 0xa5bac6, this.dark ? 0x344f63 : 0xc3d2da)
     grid.position.set(0, floorY, -4)
@@ -338,20 +346,25 @@ export class InstanceScene {
     for (const app of state.apps) {
       const card = this.cards.get(app.name)!
       const pane = state.layout.panes.find((pane) => pane.app === app.name)
+      const fitted = app.shown && pane && pane.cols > 0 && pane.rows > 0
+      const composed = !!fitted && spread === 0
+      card.element.dataset.composed = String(composed)
+      card.element.dataset.fitted = String(!!fitted)
+      card.body.visible = card.edge.visible = !composed
       let original: THREE.Vector3
-      if (app.shown && pane && pane.cols > 0 && pane.rows > 0) {
+      if (fitted) {
         const rect = this.paneRect(pane, width, height, state)
-        original = new THREE.Vector3(rect.x, rect.y, -1)
-        card.width = THREE.MathUtils.lerp(rect.width, Math.max(4.8, rect.width), spread)
-        card.height = THREE.MathUtils.lerp(rect.height, Math.max(2.9, rect.height), spread)
+        original = new THREE.Vector3(rect.x, rect.y, 0)
+        card.width = rect.width
+        card.height = rect.height
         const index = shown.indexOf(app)
         card.target.set(
           rect.x * (1 + spread * 0.12),
           rect.y * (1 + spread * 0.18),
-          0.05 + spread * (1.7 + index * 1.65),
+          spread * (1.7 + index * 1.65),
         )
         card.rotation = 0
-        this.outline(rect.x - rect.width / 2, rect.y - rect.height / 2, rect.width, rect.height, -0.99, 0x89a6b7, 0.4)
+        if (spread) this.outline(rect.x - rect.width / 2, rect.y - rect.height / 2, rect.width, rect.height, 0.01, 0x89a6b7, 0.4)
       } else {
         const index = hidden.indexOf(app)
         const row = Math.floor(index / 5)
@@ -368,26 +381,26 @@ export class InstanceScene {
         card.rotation = this.spatial ? -angle * 0.2 : 0
         original = new THREE.Vector3(card.target.x, floorY, card.target.z)
       }
-      card.element.style.width = `${card.width * 64}px`
-      card.element.style.height = `${Math.max(0.2, card.height) * 64}px`
+      const faceScale = fitted ? scale : 1 / 64
+      card.object.scale.setScalar(faceScale)
+      card.element.style.width = `${card.width / faceScale}px`
+      card.element.style.height = `${card.height / faceScale}px`
+      card.element.style.setProperty("--label-scale", String(1 / (64 * faceScale)))
+      card.content.setFit(fitted ? "cells" : "contain")
       card.tether.geometry.dispose()
       card.tether.geometry = new THREE.BufferGeometry().setFromPoints([original, card.target])
       card.tether.computeLineDistances()
-      card.tether.visible = this.spatial
+      card.tether.visible = spread > 0
       if (card.object.position.lengthSq() === 0 || this.reduced.matches) card.object.position.copy(card.target)
     }
-    // Text Panes belong to the Layout too; show their footprint without inventing an App.
-    for (const pane of state.layout.panes)
-      if (!pane.app && pane.cols && pane.rows) {
-        const rect = this.paneRect(pane, width, height, state)
-        this.outline(rect.x - rect.width / 2, rect.y - rect.height / 2, rect.width, rect.height, -0.9, 0x8b9da8, 0.6)
-        this.label(
-          pane.text ?? "Text Pane",
-          new THREE.Vector3(rect.x - rect.width / 2 + 0.1, rect.y, -0.85),
-          false,
-          true,
-        )
-      }
+  }
+
+  private stageSize() {
+    const stage = this.status?.stage ?? { cols: 80, rows: 24 }
+    const pixelWidth = stage.cols * this.cells.width, pixelHeight = stage.rows * this.cells.height
+    // Limit scene size with one uniform scale; never clamp width and height independently.
+    const scale = Math.min(18 / pixelWidth, 14 / pixelHeight)
+    return { width: pixelWidth * scale, height: pixelHeight * scale, scale }
   }
 
   private paneRect(pane: PaneGeometry, width: number, height: number, state: InstanceStatus) {
@@ -421,11 +434,10 @@ export class InstanceScene {
     )
   }
 
-  private label(text: string, position: THREE.Vector3, hidden = false, plain = false) {
+  private label(text: string, position: THREE.Vector3, hidden = false) {
     const element = document.createElement("div")
     element.className = `scene-label${hidden ? " hidden-label" : ""}`
-    if (plain) element.textContent = text
-    else element.innerHTML = text // Only local labels and numeric Stage dimensions reach this branch.
+    element.innerHTML = text // Only local labels and numeric Stage dimensions reach this branch.
     const label = new CSS3DObject(element)
     label.position.copy(position)
     label.scale.setScalar(0.025)
@@ -457,7 +469,11 @@ export class InstanceScene {
       const speed = this.reduced.matches ? 1 : 0.085
       this.camera.position.lerp(this.targetCamera, speed)
       this.controls.target.lerp(this.targetLook, speed)
-      if (this.camera.position.distanceTo(this.targetCamera) < 0.02) this.flying = false
+      if (this.camera.position.distanceTo(this.targetCamera) < 0.02 && this.controls.target.distanceTo(this.targetLook) < 0.02) {
+        this.camera.position.copy(this.targetCamera)
+        this.controls.target.copy(this.targetLook)
+        this.flying = false
+      }
     }
     for (const card of this.cards.values()) {
       card.object.position.lerp(card.target, this.reduced.matches ? 1 : 0.13)
@@ -498,6 +514,7 @@ export class InstanceScene {
     this.controls.dispose()
     for (const card of this.cards.values()) this.removeCard(card)
     this.clearStructure()
+    this.stageObject.element.remove()
     this.webgl?.dispose()
     this.webgl?.domElement.remove()
     this.css.domElement.remove()

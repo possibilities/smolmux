@@ -135,6 +135,7 @@ svg {
 .terminal-view { position: relative; min-width: 0; overflow: hidden; }
 .terminal-view[data-fit="width"], .terminal-view[data-fit="native"] { overflow: auto; scrollbar-gutter: stable; }
 .terminal-spacer { position: relative; flex: none; margin: 0 auto; }
+.terminal-view[data-fit="cells"] .terminal-spacer { margin: 0; }
 .terminal-raster { position: absolute; inset: 0 auto auto 0; display: block; transform-origin: 0 0; pointer-events: none; }
 .terminal-transcript { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: pre; margin: 0; padding: 0; }
 .terminal-message { font: 12px/1.5 var(--terminal-font, monospace); white-space: pre-wrap; padding: 8px; }
@@ -443,6 +444,7 @@ svg {
   inset: 0;
   touch-action: none;
 }
+.viewport[data-mode="stage"] { inset: 128px 24px 110px; }
 .viewport canvas {
   position: absolute;
   inset: 0;
@@ -579,10 +581,10 @@ svg {
   text-align: left;
   background: #173345f5;
   color: #d1e2e9;
-  border: 1px solid #809fb1;
+  border: 0;
   box-shadow: 0 12px 32px #0d293d18;
-  border-radius: 9px;
-  overflow: hidden;
+  border-radius: 0;
+  overflow: visible;
   backface-visibility: hidden;
   pointer-events: auto;
   cursor: pointer;
@@ -609,14 +611,21 @@ svg {
   border-color: #b7aa8c;
 }
 .terminal-face-head {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 0;
+  width: calc(100% / var(--label-scale, 1));
+  transform: scale(var(--label-scale, 1));
+  transform-origin: left bottom;
   display: flex;
   align-items: center;
   gap: 11px;
   height: 37px;
   padding: 0 13px;
   flex-shrink: 0;
-  background: #ffffff08;
-  border-bottom: 1px solid #c0d7e41f;
+  background: #173345f5;
+  border: 1px solid #c0d7e43f;
+  border-radius: 6px 6px 0 0;
   font-size: 12px;
 }
 .terminal-face-head strong {
@@ -645,11 +654,18 @@ svg {
   background: #d0b581;
 }
 .terminal-face-screen {
-  flex: 1;
+  position: absolute;
+  inset: 0;
   min-height: 0;
-  padding: 8px;
+  padding: 0;
 }
 .terminal-face-foot {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  width: calc(100% / var(--label-scale, 1));
+  transform: scale(var(--label-scale, 1));
+  transform-origin: left top;
   height: 23px;
   padding: 0 12px;
   display: flex;
@@ -659,6 +675,7 @@ svg {
   border-top: 1px solid #b4d2e114;
   color: #91aebd;
   flex-shrink: 0;
+  background: #173345f5;
 }
 .terminal-face[data-tone="hidden"] .terminal-face-foot {
   color: #a2c3b5;
@@ -666,7 +683,15 @@ svg {
 .terminal-face.output-active .terminal-face-head i {
   box-shadow: 0 0 9px 3px #96c8b499;
 }
+.terminal-face[data-composed="true"] { box-shadow: none; }
+.terminal-face[data-composed="true"] .terminal-face-head,
+.terminal-face[data-composed="true"] .terminal-face-foot { display: none; }
+.stage-surface { pointer-events: none; backface-visibility: hidden; }
+.stage-dividers { position: absolute; inset: 0; width: 100%; height: 100%; }
+.stage-text-pane { position: absolute; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.stage-text-pane > span { white-space: pre-wrap; overflow-wrap: anywhere; text-align: center; }
 .scene-label {
+  width: 1px; /* Anchor the start of labels at their scene coordinate. */
   color: var(--muted);
   white-space: nowrap;
   font:

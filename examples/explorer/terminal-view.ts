@@ -4,6 +4,20 @@ import { adjustMetric, cssFont, rgb, type TerminalAppearance } from "./appearanc
 import { drawTerminalGlyph } from "./terminal-glyphs.ts"
 
 export const loadTerminalEngine = () => Ghostty.load("/assets/ghostty-vt.wasm")
+export function measureTerminalCells(appearance: TerminalAppearance) {
+  const ctx = document.createElement("canvas").getContext("2d")!
+  const fontSize = appearance.fontSize * 96 / 72 // Ghostty points → CSS pixels.
+  ctx.font = `${fontSize}px ${cssFont(appearance.fontFamily)}`
+  const metrics = ctx.measureText("Mg")
+  const advance = ctx.measureText("M").width
+  const width = Math.max(1, Math.ceil(adjustMetric(advance, appearance.cellWidth)))
+  const ascent = metrics.fontBoundingBoxAscent || fontSize * 0.8
+  const baseHeight = ascent + (metrics.fontBoundingBoxDescent || fontSize * 0.2)
+  const height = Math.max(1, Math.ceil(adjustMetric(baseHeight, appearance.cellHeight)))
+  const baseline = adjustMetric(ascent + (height - baseHeight) / 2, appearance.baseline)
+  return { width, height, fontSize, baseline, advance }
+}
+export type TerminalCells = ReturnType<typeof measureTerminalCells>
 // Captures are screen data. Only SGR is accepted; OSC, input modes, links, etc. cannot escape a row.
 const plain = (text: string) => text.replace(/[\x00-\x1f\x7f-\x9f]/gu, " ")
 export function captureRows(capture: Capture, history: boolean): string[] {
@@ -25,7 +39,7 @@ export class TerminalView {
   private capture: Capture | null = null
   private previousLines: string[] | null = null
   private history = false
-  private fitMode: "contain" | "width" | "native" = "contain"
+  private fitMode: "contain" | "width" | "native" | "cells" = "contain"
   private naturalWidth = 0
   private naturalHeight = 0
   private cols = 0
@@ -34,7 +48,8 @@ export class TerminalView {
   private drawFrame = 0
 
   constructor(private readonly host: HTMLElement, private readonly engine: Ghostty,
-    private readonly appearance: TerminalAppearance) {
+    private readonly appearance: TerminalAppearance,
+    private readonly metrics = measureTerminalCells(appearance)) {
     host.classList.add("terminal-view")
     this.spacer.className = "terminal-spacer"
     this.canvas.className = "terminal-raster"
@@ -61,7 +76,11 @@ export class TerminalView {
     this.terminal?.free(); this.terminal = null
   }
 
-  setFit(mode: "contain" | "width" | "native") { this.fitMode = mode; this.fit() }
+  setFit(mode: "contain" | "width" | "native" | "cells") {
+    this.fitMode = mode
+    this.host.dataset.fit = mode
+    this.fit()
+  }
 
   update(capture: Capture, history = false) {
     if (this.capture === capture && this.previousLines === capture.lines && this.history === history) return
@@ -88,14 +107,7 @@ export class TerminalView {
   private draw() {
     if (!this.terminal || this.disposed) return
     const a = this.appearance, ctx = this.ctx
-    const fontSize = a.fontSize * 96 / 72 // Ghostty sizes are points; browser canvas uses CSS pixels.
-    ctx.font = `${fontSize}px ${cssFont(a.fontFamily)}`
-    const metrics = ctx.measureText("Mg")
-    const cw = Math.max(1, Math.ceil(adjustMetric(ctx.measureText("M").width, a.cellWidth)))
-    const ascent = metrics.fontBoundingBoxAscent || fontSize * 0.8
-    const baseHeight = ascent + (metrics.fontBoundingBoxDescent || fontSize * 0.2)
-    const ch = Math.max(1, Math.ceil(adjustMetric(baseHeight, a.cellHeight)))
-    const baseline = adjustMetric(ascent + (ch - baseHeight) / 2, a.baseline)
+    const { fontSize, width: cw, height: ch, baseline } = this.metrics
     this.naturalWidth = this.cols * cw
     this.naturalHeight = this.rows * ch
     // Dense or very large Instances must not allocate an unbounded canvas per App.
@@ -170,7 +182,7 @@ export class TerminalView {
     const width = this.host.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight)
     const height = this.host.clientHeight - parseFloat(css.paddingTop) - parseFloat(css.paddingBottom)
     if (width <= 0 || height <= 0) return
-    const scale = this.fitMode === "native" ? 1 : Math.max(.001, Math.min(1, width / this.naturalWidth,
+    const scale = this.fitMode === "native" || this.fitMode === "cells" ? 1 : Math.max(.001, Math.min(1, width / this.naturalWidth,
       this.fitMode === "contain" ? height / this.naturalHeight : Infinity))
     this.canvas.style.width = `${this.naturalWidth}px`
     this.canvas.style.height = `${this.naturalHeight}px`

@@ -7,6 +7,7 @@ import { startBridge } from "./bridge.ts"
 import { socketDirectory } from "./discovery.ts"
 import { loadGhosttyAppearance } from "./ghostty-config.ts"
 import type { Capture } from "../../src/protocol.ts"
+import { checkStageGeometry } from "./check-stage.ts"
 
 // A dedicated browser with an ephemeral profile. It never touches an operator's tab.
 const fixture = await explorerFixture()
@@ -163,6 +164,7 @@ try {
   await page.keyboard.press("Escape")
   await expect(page.locator("#terminal-dialog")).toBeHidden()
   await page.screenshot({ path: join(evidence, "live-output.png") })
+  await checkStageGeometry(page, fixture, evidence)
   // A Runtime disappearing must immediately remove stale terminal content.
   fixture.server.stop()
   await expect(page.locator("#connection-text")).toHaveText("Reconnecting")
@@ -173,7 +175,7 @@ try {
   await expect(page.locator(".terminal-face")).toHaveCount(6)
   expect(errors).toEqual([])
   console.log(
-    `Explorer browser checks passed: live discovery, hidden Captures, history, navigation, filters, demo isolation, responsive layout, reconnect, Ghostty appearance, light/dark/system, full columns, solid borders, expanded terminal and coalesced live output.\nScreens: ${evidence}`,
+    `Explorer browser checks passed: live discovery, hidden Captures, history, navigation, filters, demo isolation, responsive layout, reconnect, Ghostty appearance, light/dark/system, full columns, solid borders, expanded terminal, coalesced live output and exact composed Stage geometry (unequal, one-row, wide and tall Panes, Text Panes and Dividers).\nScreens: ${evidence}`,
   )
 } finally {
   await browser?.close()

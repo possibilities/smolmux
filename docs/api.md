@@ -9,7 +9,9 @@ The [observatory example](../examples/explorer/README.md) demonstrates live
 Instance discovery, `state.get` observation, hidden `app.capture` reads and
 Revision-guarded `layout.apply` navigation in a local 3D browser application.
 It chooses a free loopback port by default. It is a consumer of this contract
-and adds no Runtime method or event.
+and adds no Runtime method or event. Its composed Stage places Captures at the
+reported Pane cell rectangles with one shared font-derived scale, preserving
+the Layout's dimensions without changing Session sizes.
 
 ## Connection and envelopes
 

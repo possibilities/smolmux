@@ -29,8 +29,16 @@ in the browser, and never create or modify a real Instance.
   **Reset camera** returns to the overview. **Separation** controls the exploded
   depth. None of these controls changes the terminal Layout.
 - **Spatial** shows the Stage footprint, separated terminal faces, and off-Stage
-  Apps. **Stage** puts fitted Panes back at their Layout proportions. Hidden Apps
-  remain inspectable below the Stage. Text Panes have labeled footprints.
+  Apps. **Stage** composes fitted Panes at their exact cell rectangles with a
+  straight-on camera; drag to pan and scroll to zoom. One shared cell scale comes
+  from your terminal font, including its cell adjustments. Wide and tall Stages
+  keep their true aspect ratio. Hidden Apps remain inspectable below the Stage.
+- Face headers and status labels sit outside terminal content and disappear when
+  composed (in Stage view or at zero Separation). Unfolding changes position and
+  depth, never a fitted Pane's dimensions. Real Text Panes remain centered within
+  their rectangles; joined one-cell Dividers and unused terminal background
+  complete the Stage. Selection stays in the list and inspector without adding
+  chrome to the composed terminal.
 - The App list supports keyboard selection, search and on-Stage/hidden filters.
   **Off Stage** means logically visible but without fitted cells; it is different
   from hidden. Paused, stopped, exited, failed and unreachable Apps remain listed.
@@ -123,5 +131,7 @@ fixture with no PTYs. On macOS it uses installed Google Chrome; elsewhere run
 `bunx playwright install chromium` first, or set
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`. It checks live discovery, hidden/paused
 Captures, history, guarded navigation, demo isolation, filtering, responsive
-layout and reconnects, and writes visual evidence under the private smolmux
-temporary directory. It closes its browser and sockets in `finally`.
+layout and reconnects. It compares actual projected terminal bounds to Layout
+cell coordinates, including unequal and one-row Panes, wide/tall Stages, Text
+Panes, Dividers, pan and zero Separation. It writes visual evidence under the
+private smolmux temporary directory. It closes its browser and sockets in `finally`.

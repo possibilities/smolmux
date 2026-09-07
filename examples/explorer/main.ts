@@ -653,6 +653,10 @@ function setMode(spatial: boolean) {
   button("spatial-view").setAttribute("aria-pressed", String(spatial))
   button("stage-view").setAttribute("aria-pressed", String(!spatial))
   element<HTMLInputElement>("spread").disabled = !spatial
+  element("viewport").parentElement!.querySelector(".gesture-hint")!.textContent =
+    spatial ? "Drag to orbit · Scroll to zoom" : "Drag to pan · Scroll to zoom"
+  element("viewport").setAttribute("aria-label",
+    `${spatial ? "3D scene. Drag to orbit" : "Composed Stage. Drag to pan"}, scroll to zoom. Use the App list to select with the keyboard.`)
   scene.setMode(spatial)
 }
 element("spread").addEventListener("input", (event) =>

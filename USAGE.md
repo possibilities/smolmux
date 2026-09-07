@@ -165,8 +165,11 @@ bun run explorer                 # chooses a free port; open the full URL it pri
 
 Its Instance menu discovers answering, user-owned API sockets across configuration
 directories. Spatial view unfolds the Stage and places hidden and squeezed-out
-Apps below it. Stage view restores fitted proportions. Every declared App remains
-in the list, including stopped, paused, exited, failed and unreachable Apps.
+Apps below it. Stage view composes exact Pane rectangles at one shared terminal
+cell scale, without visualization headers, padding or borders consuming cells.
+Text Panes and one-cell Dividers complete the Layout; pan and zoom keep the view
+straight on. Every declared App remains in the list, including stopped, paused,
+exited, failed and unreachable Apps.
 Selecting an App reads its terminal Capture and recent history without changing
 Focus; the activity strip counts observed output events, not CPU or process work.
 
