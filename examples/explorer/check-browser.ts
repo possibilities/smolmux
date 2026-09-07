@@ -8,6 +8,7 @@ import { socketDirectory } from "./discovery.ts"
 import { loadGhosttyAppearance } from "./ghostty-config.ts"
 import type { Capture } from "../../src/protocol.ts"
 import { checkStageGeometry } from "./check-stage.ts"
+import { checkTerminalSampling } from "./check-sampling.ts"
 
 // A dedicated browser with an ephemeral profile. It never touches an operator's tab.
 const fixture = await explorerFixture()
@@ -139,8 +140,9 @@ try {
       available: host.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight) }
   }).filter(size => size.width > 0))
   expect(fitted.every(size => size.width <= size.available + .5)).toBe(true)
-  // The geometric left border is continuous across every row boundary, on the actual raster.
-  const border = await canvas.evaluate(node => {
+  // The inspector retains the full raster; geometric borders remain continuous
+  // before the scene's projection filter reduces subpixel lines to coverage.
+  const border = await page.locator("#capture canvas").evaluate(node => {
     const image = node as HTMLCanvasElement, ctx = image.getContext("2d")!
     const ratio = image.width / parseFloat(image.style.width)
     const cw = Number(image.dataset.cellWidth) * ratio
@@ -165,6 +167,8 @@ try {
   await expect(page.locator("#terminal-dialog")).toBeHidden()
   await page.screenshot({ path: join(evidence, "live-output.png") })
   await checkStageGeometry(page, fixture, evidence)
+  await checkTerminalSampling(page, fixture, evidence)
+  await expect(page.locator("#connection-text")).toHaveText("Live")
   // A Runtime disappearing must immediately remove stale terminal content.
   fixture.server.stop()
   await expect(page.locator("#connection-text")).toHaveText("Reconnecting")
@@ -175,7 +179,7 @@ try {
   await expect(page.locator(".terminal-face")).toHaveCount(6)
   expect(errors).toEqual([])
   console.log(
-    `Explorer browser checks passed: live discovery, hidden Captures, history, navigation, filters, demo isolation, responsive layout, reconnect, Ghostty appearance, light/dark/system, full columns, solid borders, expanded terminal, coalesced live output and exact composed Stage geometry (unequal, one-row, wide and tall Panes, Text Panes and Dividers).\nScreens: ${evidence}`,
+    `Explorer browser checks passed: live discovery, hidden Captures, history, navigation, filters, demo isolation, responsive layout, reconnect, Ghostty appearance, light/dark/system, full columns, solid borders, expanded terminal, coalesced live output, exact composed Stage geometry and filtered Spatial lines at 1x/2x density and multiple angles.\nScreens: ${evidence}`,
   )
 } finally {
   await browser?.close()

@@ -44,6 +44,9 @@ export class InstanceScene {
   private readonly structure = new THREE.Group()
   private readonly stageObject = new CSS3DObject(document.createElement("div"))
   private readonly cells: TerminalCells
+  private readonly sampleCorners = Array.from({ length: 4 }, () => new THREE.Vector3())
+  private viewportWidth = 1
+  private viewportHeight = 1
   private readonly labelObjects: CSS3DObject[] = []
   private readonly reduced = matchMedia("(prefers-reduced-motion: reduce)")
   private readonly resizeObserver: ResizeObserver
@@ -149,6 +152,8 @@ export class InstanceScene {
   private resize() {
     const width = this.container.clientWidth
     const height = this.container.clientHeight
+    this.viewportWidth = width
+    this.viewportHeight = height
     this.camera.aspect = width / Math.max(height, 1)
     this.camera.updateProjectionMatrix()
     this.webgl?.setSize(width, height)
@@ -492,8 +497,27 @@ export class InstanceScene {
       if (time > card.pulseUntil) card.element.classList.remove("output-active")
     }
     this.controls.update()
+    this.camera.updateMatrixWorld()
+    for (const card of this.cards.values()) this.sampleCard(card)
     this.webgl?.render(this.scene, this.camera)
     this.css.render(this.scene, this.camera)
+  }
+
+  private sampleCard(card: Card) {
+    // Project edges rather than the axis-aligned screen bounds: a rotated thin
+    // face needs filtering along its own axes. Both sides account for perspective.
+    const points = this.sampleCorners
+    for (let i = 0; i < 4; i++) points[i]!
+      .set((i % 2 - 0.5) * card.width, (i < 2 ? 0.5 : -0.5) * card.height, 0)
+      .applyQuaternion(card.object.quaternion).add(card.object.position).project(this.camera)
+    const edge = (a: number, b: number) => Math.hypot(
+      (points[a]!.x - points[b]!.x) * this.viewportWidth / 2,
+      (points[a]!.y - points[b]!.y) * this.viewportHeight / 2,
+    ) * Math.min(devicePixelRatio, 2)
+    card.content.setProjectionScale(
+      Math.max(edge(0, 1), edge(2, 3)) / card.width * card.object.scale.x,
+      Math.max(edge(0, 2), edge(1, 3)) / card.height * card.object.scale.y,
+    )
   }
 
   private removeCard(card: Card) {

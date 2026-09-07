@@ -177,6 +177,9 @@ Ghostty WebAssembly renders complete terminal cell grids in the 3D faces and
 width-fitted inspector. **Expand terminal** offers fit and configured font-size
 views, with scrollbars outside the content. Output refreshes for shown and hidden
 Apps in debounced batches; inspection and camera position stay in place.
+Spatial faces filter their display raster for the projected size as the camera
+moves, smoothing thin lines at oblique angles. The inspector and expanded
+terminal keep the original detail.
 At launch the explorer reads Ghostty's resolved font, point size, colors, palette,
 cursor shape and cell adjustments. It uses installed fonts locally, with bundled
 IBM Plex Mono as fallback. **Appearance** selects Ghostty, system, light or dark

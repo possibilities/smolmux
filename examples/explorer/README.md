@@ -46,6 +46,8 @@ in the browser, and never create or modify a real Instance.
   inspector fits the full width and reserves room for scrolling. **Expand
   terminal** offers an overview and your configured **Font size**, plus **Copy
   text**. Box drawing is drawn to cell edges so solid borders remain continuous.
+  Spatial faces filter the image for their projected size as you orbit and zoom,
+  keeping thin lines smooth instead of alternating between bright and dark pixels.
 - The inspector shows styled Captures. **Recent history** holds up to 200 plain-text
   preceding lines; **Return to live** resumes screen updates. An unreachable
   Session is explicitly labeled as its last known screen. A stopped or exited
@@ -88,7 +90,13 @@ without resetting the camera or App selection. History is deliberately held
 until **Return to live**; the 3D faces continue observing live output.
 
 Three.js supplies the camera, Stage structure and physical depth. CSS 3D faces
-hold canvases rendered from Ghostty's WebAssembly VT engine. The terminal keeps
+hold canvases rendered from Ghostty's WebAssembly VT engine. Each face retains
+its full terminal raster and produces a filtered display canvas at its projected
+pixel dimensions, accounting for both perspective edges and screen pixel density.
+Successive reductions of at most 2× keep thin strokes from disappearing when zoomed out.
+Small resolution buckets avoid repeated resampling for tiny camera movements;
+each new Capture and zoom uses the original raster, so filtering never accumulates.
+The inspector and expanded terminal retain the full raster. The terminal keeps
 its original cell dimensions and scales into the face without resizing the
 Session. SGR-styled viewport rows preserve indexed/default colors and attributes;
 older running Runtimes and Captures above the styled byte budget provide plain
@@ -126,7 +134,7 @@ bun run explorer:check
 scripts/local-gate.sh
 ```
 
-The browser check uses one ephemeral, headless Chrome profile and a socket
+The browser check uses one headless Chrome process with ephemeral contexts and a socket
 fixture with no PTYs. On macOS it uses installed Google Chrome; elsewhere run
 `bunx playwright install chromium` first, or set
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`. It checks live discovery, hidden/paused
@@ -134,4 +142,7 @@ Captures, history, guarded navigation, demo isolation, filtering, responsive
 layout and reconnects. It compares actual projected terminal bounds to Layout
 cell coordinates, including unequal and one-row Panes, wide/tall Stages, Text
 Panes, Dividers, pan and zero Separation. It writes visual evidence under the
-private smolmux temporary directory. It closes its browser and sockets in `finally`.
+private smolmux temporary directory. Thin-line checks compare actual screenshot
+brightness against the former unfiltered projection at normal and Retina pixel
+densities, before and after orbiting, zooming and output updates. It closes its browser
+and sockets in `finally`.

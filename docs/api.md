@@ -11,7 +11,8 @@ Revision-guarded `layout.apply` navigation in a local 3D browser application.
 It chooses a free loopback port by default. It is a consumer of this contract
 and adds no Runtime method or event. Its composed Stage places Captures at the
 reported Pane cell rectangles with one shared font-derived scale, preserving
-the Layout's dimensions without changing Session sizes.
+the Layout's dimensions without changing Session sizes. Filtering for oblique
+views happens only in the browser; the Capture data is unchanged.
 
 ## Connection and envelopes
 

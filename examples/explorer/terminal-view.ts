@@ -34,7 +34,11 @@ export class TerminalView {
   private readonly transcript = document.createElement("pre")
   private readonly message = document.createElement("p")
   private readonly observer: ResizeObserver
-  private readonly ctx: CanvasRenderingContext2D
+  private raster = this.canvas
+  private ctx: CanvasRenderingContext2D
+  private projection: { x: number; y: number } | null = null
+  private sampleBuffers: HTMLCanvasElement[] = []
+  private fittedScale = 1
   private terminal: GhosttyTerminal | null = null
   private capture: Capture | null = null
   private previousLines: string[] | null = null
@@ -74,12 +78,31 @@ export class TerminalView {
     this.message.hidden = false
     this.message.textContent = text
     this.terminal?.free(); this.terminal = null
+    this.naturalWidth = this.naturalHeight = 0
+    this.raster.width = this.raster.height = 1
+    this.canvas.width = this.canvas.height = 1
+    for (const buffer of this.sampleBuffers) buffer.width = buffer.height = 1
   }
 
   setFit(mode: "contain" | "width" | "native" | "cells") {
     this.fitMode = mode
     this.host.dataset.fit = mode
     this.fit()
+  }
+
+  /** Device pixels per CSS pixel along the projected face's horizontal/vertical edges. */
+  setProjectionScale(x: number, y: number) {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x <= 0 || y <= 0) return
+    if (this.raster === this.canvas) {
+      // Keep the complete terminal raster; camera movement must never compound resampling.
+      this.raster = document.createElement("canvas")
+      this.raster.width = this.canvas.width
+      this.raster.height = this.canvas.height
+      this.ctx = this.raster.getContext("2d", { alpha: false })!
+      this.ctx.drawImage(this.canvas, 0, 0)
+    }
+    this.projection = { x, y }
+    this.present()
   }
 
   update(capture: Capture, history = false) {
@@ -106,7 +129,7 @@ export class TerminalView {
 
   private draw() {
     if (!this.terminal || this.disposed) return
-    const a = this.appearance, ctx = this.ctx
+    const a = this.appearance, ctx = this.ctx, raster = this.raster
     const { fontSize, width: cw, height: ch, baseline } = this.metrics
     this.naturalWidth = this.cols * cw
     this.naturalHeight = this.rows * ch
@@ -115,9 +138,9 @@ export class TerminalView {
       Math.sqrt(2_000_000 / (this.naturalWidth * this.naturalHeight)))
     const pixelsWide = Math.max(1, Math.ceil(this.naturalWidth * ratio))
     const pixelsHigh = Math.max(1, Math.ceil(this.naturalHeight * ratio))
-    if (this.canvas.width !== pixelsWide) this.canvas.width = pixelsWide
-    if (this.canvas.height !== pixelsHigh) this.canvas.height = pixelsHigh
-    ctx.setTransform(this.canvas.width / this.naturalWidth, 0, 0, this.canvas.height / this.naturalHeight, 0, 0)
+    if (raster.width !== pixelsWide) raster.width = pixelsWide
+    if (raster.height !== pixelsHigh) raster.height = pixelsHigh
+    ctx.setTransform(raster.width / this.naturalWidth, 0, 0, raster.height / this.naturalHeight, 0, 0)
     ctx.fillStyle = a.background
     ctx.fillRect(0, 0, this.naturalWidth, this.naturalHeight)
     this.terminal.update()
@@ -174,6 +197,41 @@ export class TerminalView {
     this.canvas.dataset.cellHeight = String(ch)
     this.terminal.markClean()
     this.fit()
+    this.present(true)
+  }
+
+  private present(changed = false) {
+    if (!this.projection || !this.naturalWidth || this.disposed) return
+    // Prefilter before CSS 3D compositing. Directly shrinking the full raster with
+    // the compositor's bilinear sampling turns subpixel lines into bright/dark stripes.
+    // Small buckets avoid resampling for every tiny camera movement; no upscaling.
+    const size = (value: number, limit: number) => Math.max(1, Math.min(limit, Math.ceil(value / 16) * 16))
+    const width = size(this.naturalWidth * this.fittedScale * this.projection.x, this.raster.width)
+    const height = size(this.naturalHeight * this.fittedScale * this.projection.y, this.raster.height)
+    if (!changed && this.canvas.width === width && this.canvas.height === height) return
+    if (this.canvas.width !== width) this.canvas.width = width
+    if (this.canvas.height !== height) this.canvas.height = height
+    // Some compositors use a narrow kernel even at "high" quality. Halve first
+    // so every source texel contributes; one large reduction can erase a stroke.
+    let source = this.raster, pass = 0
+    while (source.width > width * 2 || source.height > height * 2) {
+      const slot = pass++ % 2
+      const buffer = this.sampleBuffers[slot] ??= document.createElement("canvas")
+      const nextWidth = source.width > width * 2 ? Math.ceil(source.width / 2) : source.width
+      const nextHeight = source.height > height * 2 ? Math.ceil(source.height / 2) : source.height
+      if (buffer.width !== nextWidth) buffer.width = nextWidth
+      if (buffer.height !== nextHeight) buffer.height = nextHeight
+      const filter = buffer.getContext("2d", { alpha: false })!
+      filter.imageSmoothingEnabled = true
+      filter.imageSmoothingQuality = "low" // A 2× bilinear reduction averages adjacent texels.
+      filter.drawImage(source, 0, 0, nextWidth, nextHeight)
+      source = buffer
+    }
+    const ctx = this.canvas.getContext("2d")!
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = "high"
+    ctx.drawImage(source, 0, 0, width, height)
   }
 
   fit() {
@@ -184,6 +242,7 @@ export class TerminalView {
     if (width <= 0 || height <= 0) return
     const scale = this.fitMode === "native" || this.fitMode === "cells" ? 1 : Math.max(.001, Math.min(1, width / this.naturalWidth,
       this.fitMode === "contain" ? height / this.naturalHeight : Infinity))
+    this.fittedScale = scale
     this.canvas.style.width = `${this.naturalWidth}px`
     this.canvas.style.height = `${this.naturalHeight}px`
     this.canvas.style.transform = `scale(${scale})`
