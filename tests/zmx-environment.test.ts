@@ -76,17 +76,14 @@ test("the Companion pin is a fork commit and the build string a Companion built 
   expect(COMPANION_PIN.repository).toMatch(/^https:\/\/github\.com\/possibilities\/zmx(\.git)?$/)
   expect(COMPANION_PIN.branch).toBe("integration")
   expect(COMPANION_PIN.commit).toMatch(/^[0-9a-f]{40}$/)
-  // `<upstream version>+fmx.<12 hex of the commit>`: the build metadata names
-  // the commit, so the two can never disagree. The `+fmx.` marker is the
-  // fork's own and outlived the rename: its build.zig refuses a version
-  // naming it without -Dcompanion, and renaming it here would bypass that
-  // guard. It moves when the fork does.
-  expect(COMPANION_PIN.build).toMatch(/^\d+\.\d+\.\d+\+fmx\.[0-9a-f]{12}$/)
-  expect(COMPANION_PIN.build.endsWith(`+fmx.${COMPANION_PIN.commit.slice(0, 12)}`)).toBe(true)
+  // The fork owns its metadata namespace; the suffix must name the exact
+  // pinned commit independently of that namespace.
+  expect(COMPANION_PIN.build).toMatch(/^\d+\.\d+\.\d+\+[A-Za-z0-9-]+\.[0-9a-f]{12}$/)
+  expect(COMPANION_PIN.build.endsWith(`.${COMPANION_PIN.commit.slice(0, 12)}`)).toBe(true)
 })
 
 test("a Companion's build is the first line of its version output", async () => {
-  expect(parseCompanionVersion("zmx\t\t0.7.0+fmx.0123456789ab\nghostty_vt\tghostty-1.3.2\nsocket_dir\t/tmp/x\n")).toBe("0.7.0+fmx.0123456789ab")
+  expect(parseCompanionVersion("zmx\t\t0.7.0+arthack.0123456789ab\nghostty_vt\tghostty-1.3.2\nsocket_dir\t/tmp/x\n")).toBe("0.7.0+arthack.0123456789ab")
   expect(parseCompanionVersion("zmx 0.7.0\n")).toBe("0.7.0")
   expect(parseCompanionVersion("zmx 0.7.0")).toBe("0.7.0")
   expect(parseCompanionVersion("smolmux 0.1.1\n")).toBeNull()
@@ -101,7 +98,7 @@ test("a Companion's build is the first line of its version output", async () => 
     await writeFile(fake, `#!/bin/sh\n[ "$1" = version ] || exit 2\nprintf 'zmx\\t\\t%s\\nsocket_dir\\t%s\\n' "$FAKE_BUILD" "$ZMX_DIR"\n`)
     await chmod(fake, 0o755)
     const directory = join(root, "zmx")
-    expect(await companionBuild(fake, { FAKE_BUILD: "0.7.0+fmx.abc", ZMX_DIR: "/theirs" }, directory)).toBe("0.7.0+fmx.abc")
+    expect(await companionBuild(fake, { FAKE_BUILD: "0.7.0+arthack.abc", ZMX_DIR: "/theirs" }, directory)).toBe("0.7.0+arthack.abc")
     const broken = join(root, "broken")
     await writeFile(broken, "#!/bin/sh\necho 'no such command' >&2\nexit 1\n")
     await chmod(broken, 0o755)
@@ -127,7 +124,7 @@ test("a Companion that is not the pinned build is refused unless the override na
   expect(sibling).toContain("/opt/smolmux/smolmux-zmx (beside smolmux) is build 0.7.0")
   expect(sibling).toContain(`pins ${pinned} (protocol 1)`)
   expect(sibling).toContain("Reinstall smolmux to restore the pair, or set SMOLMUX_ZMX_PATH")
-  expect(companionMismatch({ path: "/usr/local/bin/smolmux-zmx", origin: "path" }, "0.8.0+fmx.000000000000", 1)).toContain("(on PATH)")
+  expect(companionMismatch({ path: "/usr/local/bin/smolmux-zmx", origin: "path" }, "0.8.0+arthack.000000000000", 1)).toContain("(on PATH)")
   const override = companionMismatch({ path: "/src/zmx/zig-out/bin/zmx", origin: "override" }, "0.7.0", 1)
   expect(override).toContain("(SMOLMUX_ZMX_PATH) is build 0.7.0")
   expect(override).toContain("running under the override")

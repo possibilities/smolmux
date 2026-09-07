@@ -57,7 +57,9 @@ repository="$(pin_value repository)"
 commit="$(pin_value commit)"
 build="$(pin_value build)"
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail "companion.json commit is not a full sha: $commit"
-[[ "$build" == *"+fmx.${commit:0:12}" ]] || fail "companion.json build $build does not name commit ${commit:0:12}"
+build_metadata="${build#*+}"
+[[ "$build_metadata" =~ ^[A-Za-z0-9-]+\.[0-9a-f]{12}$ && "$build_metadata" == *".${commit:0:12}" ]] \
+  || fail "companion.json build $build must name its fork and commit ${commit:0:12}"
 [[ -n "$repository" ]] || fail "companion.json has no repository"
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/smolmux-companion.XXXXXX")"
@@ -102,18 +104,16 @@ fi
 zon="$companion_source/build.zig.zon"
 companion_version="$( (grep -m 1 -E '^[[:space:]]*\.version = "' "$zon" || true) | sed 's/^[[:space:]]*\.version = "\([^"]*\)",.*/\1/')"
 [[ -n "$companion_version" ]] || fail "no .version in $zon"
-[[ "$build" == "$companion_version+fmx.${commit:0:12}" ]] \
-  || fail "companion.json build $build is not $companion_version+fmx.${commit:0:12} (the fork at the pin is version $companion_version)"
+[[ "$build" == "$companion_version+$build_metadata" ]] \
+  || fail "companion.json build $build is not $companion_version+$build_metadata (the fork at the pin is version $companion_version)"
 minimum_zig="$( (grep -m 1 -E '^[[:space:]]*\.minimum_zig_version = "' "$zon" || true) | sed 's/^[[:space:]]*\.minimum_zig_version = "\([^"]*\)",.*/\1/')"
 [[ -n "$minimum_zig" ]] || fail "no .minimum_zig_version in $zon"
 zig_series="${minimum_zig%.*}"
 [[ "$(zig version)" == "$zig_series".* ]] || fail "the Companion builds with zig $zig_series.x (found $(zig version))"
 
 prefix="$work_dir/out"
-# The `+fmx.` marker is the fork's, not ours: its build.zig refuses a version
-# naming it without -Dcompanion, which is what stops a stock build passing the
-# pin and then keeping sessions in a human's own directory. Renaming it to
-# smolmux would bypass that guard, so it waits for a fork change and a pin move.
+# The fork owns its metadata namespace. Smolmux checks its exact pinned version
+# and commit, and always selects the isolated Companion directory policy.
 build_args=(-Dcompanion -Doptimize=ReleaseFast "-Dversion=$build")
 [[ -n "$target" ]] && build_args+=("-Dtarget=$target")
 (cd "$companion_source" && zig build "${build_args[@]}" --prefix "$prefix") \
