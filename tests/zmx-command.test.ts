@@ -41,6 +41,8 @@ test("reads every discovery state, tolerating what each omits", () => {
   const exited = readEntry({ name: "x", state: "exited", pid: 1, createdAt: 2, labels: { a: "b" }, exit: { code: 7, endedAt: 9 } })
   expect(exited?.exit).toEqual({ code: 7, signal: 0, reason: "unknown", endedAt: 9 })
   expect(exited?.labels).toEqual({ a: "b" })
+  const unknown = { code: null, signal: null, reason: "requested", endedAt: 10 }
+  expect(readEntry({ name: "migrated", state: "exited", exit: unknown })?.exit).toEqual(unknown)
   expect(readEntry({ name: "x", state: "dancing" })).toBeNull()
   expect(readEntry({ state: "live" })).toBeNull()
 })

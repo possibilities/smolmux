@@ -75,6 +75,12 @@
       "signal": 9,
       "reason": 1,
       "hex": "0009010000000000"
+    },
+    "exitUnknown": {
+      "code": null,
+      "signal": null,
+      "reason": 0,
+      "hex": "0000000100000000"
     }
   },
   "tags": {
@@ -101,9 +107,11 @@
     "Welcome": 20,
     "RestoreBegin": 21,
     "Ready": 22,
-    "Exit": 23
+    "Exit": 23,
+    "Migrate": 24,
+    "MigrateAck": 25
   },
-  "zmxIpcBlob": "0c33db91a2b2e0e8a375546780ad2fbf180702e1",
+  "zmxIpcBlob": "15a79995ab8d6d12d99a82f748622e3fb683d804",
   "minProtocolVersion": 1,
   "maxClientNameLen": 64,
   "exitLen": 8,
@@ -112,5 +120,6 @@
     "requested": 1,
     "daemonFailure": 2,
     "execFailure": 3
-  }
+  },
+  "exitStatusUnknown": 1
 }

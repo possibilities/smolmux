@@ -20,6 +20,9 @@ import { CompanionCommand, CompanionCreateError, type SessionEntry } from "../sr
  */
 const ZMX = process.env.SMOLMUX_ZMX_PATH
 const ENABLED = Boolean(ZMX && existsSync(ZMX))
+// The decoder also gates against the previous pin before the feature lands.
+// Enable the handoff proofs when running against the candidate/new pin.
+const MIGRATION_ENABLED = ENABLED && process.env.SMOLMUX_RUN_MIGRATION_TESTS === "1"
 const INSTANCE = "0123456789ab"
 
 const decoder = new TextDecoder()
@@ -102,6 +105,14 @@ const start = (identity: SessionIdentity): Promise<SessionTransport> =>
     size: { cols: 80, rows: 24 },
   })
 
+const migrate = async (name: string) => {
+  const proc = Bun.spawn([ZMX!, "migrate", name], {
+    env: { ...process.env, ZMX_DIR: dir }, stdout: "pipe", stderr: "pipe",
+  })
+  const [code, stdout, stderr] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()])
+  expect({ code, error: code === 0 ? "" : stdout + stderr }).toEqual({ code: 0, error: "" })
+}
+
 beforeAll(async () => {
   if (!ENABLED) return
   dir = await mkdtemp("/tmp/smolmuxz-tr-")
@@ -126,6 +137,47 @@ afterAll(async () => {
   expect(await companion.list()).toEqual([])
   await rm(dir, { recursive: true, force: true })
 })
+
+test.skipIf(!MIGRATION_ENABLED)("repeated handoffs preserve process and IO, then propagate unknown exit through Transport", async () => {
+  const identity = sessionIdentity(INSTANCE, "handoff-live")
+  let transport = await start(identity)
+  let seen = watch(transport)
+  try {
+    expect(await waitFor(() => seen.text.includes("READY"))).toBe(true)
+    const pid = (await companion.inspect(identity.companionName)).pid
+    for (let handoff = 0; handoff < 2; handoff++) {
+      await migrate(identity.companionName)
+      expect(await waitFor(() => seen.lost !== null)).toBe(true)
+      expect(seen.exited).toBeNull()
+      transport.detach()
+      expect((await companion.inspect(identity.companionName)).pid).toBe(pid)
+      transport = await factory.attach(identity, { cols: 80, rows: 24 })
+      seen = watch(transport)
+      expect(await waitFor(() => seen.readies === 1 && seen.text.includes("READY"))).toBe(true)
+      transport.write(new TextEncoder().encode(`after-${handoff}\n`))
+      expect(await waitFor(() => seen.text.includes(`got:after-${handoff}`))).toBe(true)
+    }
+    transport.write(new TextEncoder().encode("quit\n"))
+    expect(await waitFor(() => seen.exited !== null)).toBe(true)
+    expect(seen.exited).toEqual({ code: null, signal: null, reason: "natural" })
+  } finally { transport.detach() }
+}, 30_000)
+
+test.skipIf(!MIGRATION_ENABLED)("a migrated exit record retains null status through recovery", async () => {
+  const identity = sessionIdentity(INSTANCE, "handoff-record")
+  const trigger = `${dir}/logs/exit-now`
+  await companion.create({
+    name: identity.companionName,
+    command: ["/bin/sh", "-c", 'while [ ! -f "$1" ]; do sleep 0.05; done; exit 7', "sh", trigger],
+    cwd: dir, env: { PATH: process.env.PATH ?? "" }, labels: identity.labels,
+  })
+  await migrate(identity.companionName)
+  await Bun.write(trigger, "exit")
+  expect(await waitFor(async () => (await companion.inspect(identity.companionName)).state === "exited")).toBe(true)
+  const entry = await companion.inspect(identity.companionName)
+  expect(entry.exit).toMatchObject({ code: null, signal: null, reason: "natural" })
+  await expect(factory.attach(identity, { cols: 80, rows: 24 })).rejects.toMatchObject({ exit: { code: null, signal: null, reason: "natural" } })
+}, 15_000)
 
 test.skipIf(!ENABLED)("start creates a labelled session, attaches with a restore, and writes through", async () => {
   const identity = sessionIdentity(INSTANCE, "one", { role: "list" })

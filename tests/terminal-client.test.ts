@@ -2,6 +2,7 @@ import { expect, spyOn, test } from "bun:test"
 import { resolveKeybindings } from "../src/keybindings.ts"
 import { EventEmitter } from "node:events"
 import { CompanionConnection } from "../src/companion-client.ts"
+import type { Exit } from "../src/zmx-protocol.ts"
 import { ClientInputFilter, ClientOutputRelay, runTerminalClient } from "../src/terminal-client.ts"
 
 test("an empty Runtime Restore leaves the shell surface intact", () => {
@@ -180,4 +181,36 @@ test("transport failure during input, resize, or Detach always restores the term
       connect.mockRestore()
     }
   }
+})
+
+test("unknown Runtime exit status reports a diagnostic and restores the terminal", async () => {
+  const stdin = Object.assign(new EventEmitter(), {
+    isRaw: false, isTTY: false, setRawMode(raw: boolean) { this.isRaw = raw }, resume() {}, pause() {},
+  })
+  const writes: string[] = []
+  const stdout = Object.assign(new EventEmitter(), {
+    isTTY: false, columns: 80, rows: 24,
+    write(bytes: string | Uint8Array) { writes.push(Buffer.from(bytes).toString()); return true },
+  })
+  let exit = (_status: Exit) => {}
+  let ready = () => {}
+  const connection = {
+    isClosed: false, onRestoreBegin() {}, onOutput() {}, onFrame() {}, onClose() {},
+    onExit(listener: (status: Exit) => void) { exit = listener }, onReady(listener: () => void) { ready = listener },
+    attach() { ready() }, write() {}, resize() {}, detach() {},
+  }
+  const connect = spyOn(CompanionConnection, "connect").mockResolvedValue(connection as unknown as CompanionConnection)
+  const installed = Promise.withResolvers<void>()
+  try {
+    const running = runTerminalClient({ socketPath: "unused", keybindings: resolveKeybindings().keybindings,
+      stdin: stdin as unknown as NodeJS.ReadStream, stdout: stdout as unknown as NodeJS.WriteStream,
+      onSignalHandlersInstalled: () => installed.resolve(),
+    })
+    const outcome = running.catch((error: Error) => error)
+    await installed.promise
+    exit({ code: null, signal: null, reason: 0 })
+    expect(await outcome).toMatchObject({ message: "the Runtime ended; its exit status is unknown after a Companion handoff" })
+    expect(stdin.isRaw).toBe(false)
+    expect(writes.join("")).toContain("\x1b[?25h")
+  } finally { connect.mockRestore() }
 })

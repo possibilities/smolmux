@@ -41,6 +41,11 @@ only during this Instance. Use local/stop for a stateless, expensive viewer
 that reconstructs itself when opened. Use local/pause when startup is expensive
 or interactive state matters and the application tolerates suspension.
 
+A Companion handoff preserves the Session process, but its eventual exit code
+and signal become unknown (`null`); the exit reason remains available. When the
+Runtime itself has been handed off, `smolmux attach` reports an unknown Runtime
+exit status as a diagnostic and returns 1. It cannot return the lost status.
+
 Pause saves CPU execution, not memory. Files, locks, sockets and allocations
 remain held; remote peers and external services continue running, and network
 timeouts can expire. Already submitted kernel I/O can finish. It is unsuitable

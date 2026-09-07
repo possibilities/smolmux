@@ -13,6 +13,7 @@ import {
   encodeResize,
   encodeWelcome,
   EXIT_LEN,
+  EXIT_STATUS_UNKNOWN,
   ExitReason,
   FrameReader,
   HEADER_LEN,
@@ -74,20 +75,29 @@ describe("golden wire bytes match the pinned Companion fork", () => {
   })
 
   test("exit", () => {
-    for (const key of ["exit", "exitSignalled"] as const) {
+    for (const key of ["exit", "exitSignalled", "exitUnknown"] as const) {
       const c = fixture.cases[key]
       expect(toHex(encodeExit(c))).toBe(c.hex)
       expect(decodeExit(hex(c.hex))).toEqual({ code: c.code, signal: c.signal, reason: c.reason })
     }
     expect(EXIT_LEN).toBe(fixture.exitLen)
+    expect(EXIT_STATUS_UNKNOWN).toBe(fixture.exitStatusUnknown)
     // Pinned against the wire, not against itself: renumbering a reason on
     // the Companion side has to fail here.
     expect<Record<string, number>>(ExitReason).toEqual(fixture.exitReasons)
     expect(() => encodeExit({ code: 256, signal: 0, reason: 0 })).toThrow(ProtocolError)
     expect(() => encodeExit({ code: 0, signal: -1, reason: 0 })).toThrow(ProtocolError)
+    expect(() => encodeExit({ code: null, signal: 0, reason: 0 })).toThrow(ProtocolError)
+    expect(() => encodeExit({ code: 0, signal: null, reason: 0 })).toThrow(ProtocolError)
     // A reason this client does not know decodes as its integer.
     expect(decodeExit(hex("0000c80000000000")).reason).toBe(200)
     expect(() => decodeExit(hex("000000"))).toThrow(ProtocolError)
+  })
+
+  test("Exit flags distinguish legacy zero from unknown and ignore future bits", () => {
+    expect(decodeExit(hex("0000000000000000"))).toEqual({ code: 0, signal: 0, reason: 0 })
+    expect(decodeExit(hex("0709010100000000"))).toEqual({ code: null, signal: null, reason: 1 })
+    expect(decodeExit(hex("070903fe12345678"))).toEqual({ code: 7, signal: 9, reason: 3 })
   })
 
   test("welcome", () => {

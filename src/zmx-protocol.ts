@@ -36,6 +36,8 @@ export const Tag = {
   RestoreBegin: 21,
   Ready: 22,
   Exit: 23,
+  Migrate: 24,
+  MigrateAck: 25,
 } as const
 
 export const PROTOCOL_VERSION = 1
@@ -50,6 +52,8 @@ export const HELLO_FIXED_LEN = 8
 export const MAX_CLIENT_NAME_LEN = 64
 export const WELCOME_LEN = 10
 export const EXIT_LEN = 8
+/** Exit byte 3 bit 0: set only when the daemon cannot know the status. */
+export const EXIT_STATUS_UNKNOWN = 1 << 0
 
 export type Header = { tag: number; len: number }
 export type Frame = { tag: number; payload: Uint8Array }
@@ -71,11 +75,12 @@ export type Welcome = {
 /**
  * How a session's child ended. `code` and `signal` are what the daemon's
  * `waitpid` reported — a signalled child has a non-zero `signal` and a `code`
- * of 0 — while `reason` says what brought it about.
+ * of 0 — while `reason` says what brought it about. Both are null after a
+ * handoff, when the replacement daemon cannot wait for the adopted child.
  */
 export type Exit = {
-  code: number
-  signal: number
+  code: number | null
+  signal: number | null
   reason: ExitReason
 }
 
@@ -94,25 +99,30 @@ export const ExitReason = {
 export type ExitReason = number
 
 export function encodeExit(status: Exit): Uint8Array {
+  const unknown = status.code === null && status.signal === null
+  if ((status.code === null) !== (status.signal === null)) throw new ProtocolError("Exit code and signal must both be known or both null")
   // Each field is a byte on the wire; silently truncating would encode a
   // different exit than the caller described.
   for (const [name, value] of [
-    ["code", status.code],
-    ["signal", status.signal],
+    ["code", status.code ?? 0],
+    ["signal", status.signal ?? 0],
     ["reason", status.reason],
   ] as const) {
     if (!Number.isInteger(value) || value < 0 || value > 255) throw new ProtocolError(`Exit ${name} must be a byte, got ${value}`)
   }
   const out = new Uint8Array(EXIT_LEN)
-  out[0] = status.code
-  out[1] = status.signal
+  out[0] = status.code ?? 0
+  out[1] = status.signal ?? 0
   out[2] = status.reason
+  out[3] = unknown ? EXIT_STATUS_UNKNOWN : 0
   return out
 }
 
 export function decodeExit(bytes: Uint8Array): Exit {
   if (bytes.byteLength !== EXIT_LEN) throw new ProtocolError(`Exit payload is ${bytes.byteLength} bytes, not ${EXIT_LEN}`)
-  return { code: bytes[0]!, signal: bytes[1]!, reason: bytes[2]! }
+  // Zero flags preserve legacy known status. Ignore unassigned flag bits.
+  const unknown = (bytes[3]! & EXIT_STATUS_UNKNOWN) !== 0
+  return { code: unknown ? null : bytes[0]!, signal: unknown ? null : bytes[1]!, reason: bytes[2]! }
 }
 
 export class ProtocolError extends Error {

@@ -27,7 +27,7 @@ class Owner implements LocalProcessOwner {
     this.end(identity.id)
     return exit
   }
-  end(id: string) { const record = this.active.get(id); this.active.delete(id); record?.handlers?.exit(exit) }
+  end(id: string, status = exit) { const record = this.active.get(id); this.active.delete(id); record?.handlers?.exit(status) }
   async close() { for (const id of this.active.keys()) this.end(id) }
 }
 async function harness() {
@@ -145,5 +145,17 @@ test("invalid or stale Layout never changes visibility or process policy", async
     ]) await expect(h.call("layout.apply", params)).rejects.toBeDefined()
     expect(h.runtime.apps.view("tool")).toMatchObject({ visible: false, state: "stopped" })
     expect(h.owner.starts).toHaveLength(0)
+  } finally { await h.close() }
+})
+
+test("unknown child status reaches the exit event and retained App unchanged", async () => {
+  const h = await harness()
+  try {
+    await h.call("app.create", declaration("keep"))
+    const sessionId = h.runtime.apps.view("tool").session!.id
+    const status = { code: null, signal: null, reason: "natural" }
+    h.owner.end(sessionId, status)
+    expect(h.runtime.apps.view("tool").lastExit).toEqual({ sessionId, ...status, cause: "natural" })
+    expect(h.events.find(e => e.event === "session.exited")?.data).toMatchObject({ name: "tool", sessionId, ...status, cause: "natural" })
   } finally { await h.close() }
 })

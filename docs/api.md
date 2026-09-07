@@ -333,6 +333,10 @@ An exit retains the declaration unless remove also succeeds. Code and signal
 are null when the owner cannot read them. Reason always carries information;
 cause records why smolmux requested termination, or natural when it did not.
 A notification is not permission to restart an intentionally hidden App.
+After a Companion handoff, both status fields are null in live exit events,
+retained `lastExit` values, and exits recovered from Companion records. A
+legacy Companion's zero status remains a known zero; handoff does not change
+the exit reason or the API version.
 
 ## Errors
 

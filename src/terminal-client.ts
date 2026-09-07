@@ -125,6 +125,10 @@ export async function runTerminalClient(options: TerminalClientOptions): Promise
   })
   connection.onExit((status) => {
     sawExit = true
+    if (status.code === null || status.signal === null) {
+      finish({ exitCode: 1, error: new Error("the Runtime ended; its exit status is unknown after a Companion handoff") })
+      return
+    }
     finish({ exitCode: status.signal ? 128 + status.signal : status.code })
   })
   connection.onClose((reason) => {

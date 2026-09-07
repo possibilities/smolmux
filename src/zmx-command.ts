@@ -11,8 +11,8 @@ import { companionEnvironment } from "./zmx-environment.ts"
 export type SessionState = "live" | "refused" | "unreachable" | "exited" | "absent"
 
 export type ExitRecord = {
-  code: number
-  signal: number
+  code: number | null
+  signal: number | null
   reason: string
   endedAt: number
 }
@@ -350,10 +350,10 @@ export function readEntry(value: unknown): SessionEntry | null {
     }
   }
   let exit: ExitRecord | null = null
-  if (isRecord(value.exit) && typeof value.exit.code === "number") {
+  if (isRecord(value.exit) && (typeof value.exit.code === "number" || value.exit.code === null)) {
     exit = {
       code: value.exit.code,
-      signal: typeof value.exit.signal === "number" ? value.exit.signal : 0,
+      signal: value.exit.code === null || value.exit.signal === null ? null : typeof value.exit.signal === "number" ? value.exit.signal : 0,
       reason: typeof value.exit.reason === "string" ? value.exit.reason : "unknown",
       endedAt: typeof value.exit.endedAt === "number" ? value.exit.endedAt : 0,
     }

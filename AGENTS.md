@@ -194,6 +194,9 @@
   that always says something. Nothing in smolmux acts on the exact status, so a
   Companion that cannot read one (a migrated PTY, say) degrades honestly
   rather than breaking a consumer.
+- Companion Exit byte 3 bit 0 means status unknown; zero is the legacy known
+  status. Decode unknown code and signal as null on both the live wire and
+  discovery records, preserving reason through Transport and App exit events.
 - A child's environment is smolmux's own with `SMOLMUX_*`, `ZMX_*`, `TMUX*`, and
   `HERDR_*` removed, plus the caller's `env`. A Session must never be able to
   tell it is inside smolmux, or report against an outer pane.
@@ -217,8 +220,9 @@
   override is the development loop. `smolmux doctor` runs the same resolution and
   check without binding anything.
 - Moving the pin is a source-installation act: land the fork change on
-  `integration`, push, put the commit and `<fork version>+smolmux.<12 hex>` in
-  `companion.json`, and re-check. The pinned build is always made by
+  `integration`, push, then use `~/code/zmax/scripts/pin-companion.sh --apply`
+  to move `companion.json` to the commit and `<fork version>+fmx.<12 hex>`.
+  The pinned build is always made by
   `scripts/build-companion.sh`, reached by `scripts/install.sh` and
   `scripts/install-companion.sh`; one build path, one set of flags.
 - Smolmux publishes no binaries, archives, installer payload, latest pointer, or

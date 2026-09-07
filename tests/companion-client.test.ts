@@ -249,6 +249,19 @@ test("flushed rejects when the connection dies with bytes still queued", async (
   expect(await settled).toBe("rejected")
 })
 
+test("unknown Exit status survives buffering and late subscribers", async () => {
+  const stub = await startStub(() => accept)
+  const connection = await CompanionConnection.connect(stub.path)
+  // Literal fork bytes: the unknown bit overrides the unusable status bytes.
+  stub.push(encodeFrame(Tag.Exit, Uint8Array.of(7, 9, 1, 1, 0, 0, 0, 0)))
+  await settle()
+  const seen: unknown[] = []
+  connection.onExit(status => seen.push(status))
+  expect(seen).toEqual([{ code: null, signal: null, reason: ExitReason.requested }])
+  expect(connection.exit).toEqual({ code: null, signal: null, reason: ExitReason.requested })
+  connection.close()
+})
+
 test("an oversized frame from the daemon fails the connection", async () => {
   const stub = await startStub(() => accept)
   const connection = await CompanionConnection.connect(stub.path)
