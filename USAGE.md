@@ -1,6 +1,6 @@
 # Using smolmux from an agent or application
 
-Verified against smolmux **0.9.0**, API **2**.
+Verified against smolmux **0.9.1**, API **2**.
 
 smolmux is a terminal surface you program. You declare arbitrary commands,
 choose who owns their PTYs, arrange their terminals in a Layout, and drive them
@@ -541,3 +541,7 @@ Stop old Instances with their existing applications/binaries before installing
 the new source, then start fresh. Upgrade agentmux to 0.32.0 together with
 smolmux 0.9.0, including its sibling source dependency. The Companion pin and
 wire protocol do not change in this release.
+
+Resize reaches commands through their PTY and SIGWINCH. smolmux reports DEC
+mode 2048 (in-band resize notifications) as unsupported so TUIs such as nvim
+continue responding to terminal resizing.

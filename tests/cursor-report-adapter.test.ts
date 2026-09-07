@@ -109,3 +109,16 @@ test("translates the same bytes however the stream is split", () => {
     expect(actual).toEqual(expected)
   }
 })
+
+test("declines in-band resize while preserving other coalesced terminal replies", () => {
+  const adapter = new CursorReportAdapter()
+  adapter.toTerminal(encode("\u001b[?6n"))
+  const bytes = encode("\u001b[?2048;2$y\u001b[?2026;2$y\u001b[4;5R")
+  expect(decode(adapter.toPty(bytes))).toBe("\u001b[?2048;0$y\u001b[?2026;2$y\u001b[?4;5R")
+  expect(decode(bytes)).toBe("\u001b[?2048;2$y\u001b[?2026;2$y\u001b[4;5R")
+  for (const mode of [1, 2, 3, 4]) {
+    expect(decode(adapter.toPty(encode(`\u001b[?2048;${mode}$y`)))).toBe("\u001b[?2048;0$y")
+  }
+  const ordinary = encode("\u001b[?2048;0$y\u001b[?2049;2$y")
+  expect(adapter.toPty(ordinary)).toBe(ordinary)
+})

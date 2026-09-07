@@ -51,6 +51,7 @@ export class CursorReportAdapter {
   }
 
   toPty(bytes: Uint8Array): Uint8Array {
+    bytes = withoutInBandResize(bytes)
     if (this.privateResponsesPending === 0 || bytes.byteLength === 0) return bytes
 
     const output: number[] = []
@@ -123,4 +124,22 @@ function cursorPositionReportEnd(bytes: Uint8Array, offset: number): number {
 
 function isAsciiDigit(byte: number | undefined): boolean {
   return byte !== undefined && byte >= 0x30 && byte <= 0x39
+}
+
+/**
+ * Ghostty advertises mode 2048, but this embedding delivers resize through the
+ * PTY, not CSI 48 reports. Refuse the mode so TUIs keep using SIGWINCH. Emulator
+ * responses arrive whole (possibly coalesced); only generated replies use this
+ * path, never typed input or process output.
+ */
+function withoutInBandResize(bytes: Uint8Array): Uint8Array {
+  let result = bytes
+  const prefix = [ESC, LEFT_BRACKET, QUESTION_MARK, 0x32, 0x30, 0x34, 0x38, 0x3b]
+  for (let offset = 0; offset + 10 < bytes.length; offset += 1) {
+    if (bytes[offset] !== ESC || !prefix.every((byte, index) => bytes[offset + index] === byte)) continue
+    if (bytes[offset + 8]! < 0x31 || bytes[offset + 8]! > 0x34 || bytes[offset + 9] !== 0x24 || bytes[offset + 10] !== 0x79) continue
+    if (result === bytes) result = Uint8Array.from(bytes)
+    result[offset + 8] = 0x30
+  }
+  return result
 }

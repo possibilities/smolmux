@@ -370,3 +370,6 @@ The Companion wire protocol is separate from this API and was not bumped for
 API 2. smolmux provides neither domain-specific agent management, MCP, raw-byte
 observation/input, nor a disk manifest. Your controller owns application meaning,
 configuration persistence and restart decisions.
+
+Terminal resize uses PTY sizing and SIGWINCH. DEC mode 2048 (in-band resize)
+is reported as unsupported; smolmux does not emit CSI 48 resize notifications.
