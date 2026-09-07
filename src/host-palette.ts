@@ -311,10 +311,12 @@ export function colorFgBgIsLight(value: string | undefined): boolean {
   return index <= 255 && index >= 8
 }
 
-/** The one dynamic color the embedded fx needs to answer its own OSC 11. */
+/** Apps such as Codex require both OSC 10 and 11 replies before using their palette. */
 export function buildEmbeddedThemeSequence(resolution: FxnkThemeResolution): string {
   const background = resolution.background ?? (resolution.theme === "light" ? "#fafafa" : "#1c1c1c")
-  return `\x1b]11;${background}\x1b\\`
+  const foreground = fxnkRamp(resolution.theme).foreground.toInts().slice(0, 3)
+    .map((channel) => channel.toString(16).padStart(2, "0")).join("")
+  return `\x1b]10;#${foreground}\x1b\\\x1b]11;${background}\x1b\\`
 }
 
 /** Ghostty's color-scheme notification, which the live-theme monitor treats as a trigger. */

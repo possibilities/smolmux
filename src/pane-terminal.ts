@@ -225,7 +225,7 @@ export class PaneTerminalRenderable extends EmbeddedTerminalRenderable {
     return super.onSelectionChanged(selection)
   }
 
-  /** The one dynamic color the Session needs to answer its own OSC 11 query. */
+  /** Seed both default colors so Session palette queries work in either theme. */
   public applyHostTheme(resolution: FxnkThemeResolution): void {
     this.write(buildEmbeddedThemeSequence(resolution))
   }

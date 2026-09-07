@@ -172,7 +172,7 @@ test("a response fence arriving before OSC 11 keeps the bounded sample open", ()
   }
 })
 
-test("embedded fx receives only the resolved default background", () => {
+test("embedded terminals receive the theme foreground and resolved background as a pair", () => {
   expect(
     buildEmbeddedThemeSequence({
       theme: "dark",
@@ -180,7 +180,7 @@ test("embedded fx receives only the resolved default background", () => {
       source: "osc11",
       explicit: false,
     }),
-  ).toBe("\x1b]11;#123456\x1b\\")
+  ).toBe("\x1b]10;#eeeeee\x1b\\\x1b]11;#123456\x1b\\")
   expect(
     buildEmbeddedThemeSequence({
       theme: "light",
@@ -188,7 +188,15 @@ test("embedded fx receives only the resolved default background", () => {
       source: "COLORFGBG",
       explicit: false,
     }),
-  ).toBe("\x1b]11;#fafafa\x1b\\")
+  ).toBe("\x1b]10;#262626\x1b\\\x1b]11;#fafafa\x1b\\")
+  expect(
+    buildEmbeddedThemeSequence({
+      theme: "dark",
+      background: null,
+      source: "default",
+      explicit: false,
+    }),
+  ).toBe("\x1b]10;#eeeeee\x1b\\\x1b]11;#1c1c1c\x1b\\")
 })
 
 class FakeThemePort implements FxnkThemeMonitorPort {
