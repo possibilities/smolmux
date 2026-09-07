@@ -81,6 +81,20 @@ client. It needs a TTY and owns its terminal until the host closes. Treat it as
 the terminal root of your application, not as a component inside a second
 renderer. Errors in the controller should be handled with `finally` cleanup.
 
+Shell-like controllers can opt in with
+`client.request("instance.configure", { confirmExit: true })`. Physical Ctrl+C
+is then reserved for the entire Instance: the first press overlays the bottom
+row with centered `press ctrl+c again to exit`; a second within three seconds
+runs `instance.stop`, ending every local and Companion Session and the Runtime.
+Neither press reaches the focused App. The overlay changes no Pane sizes,
+Layout Revision or Focus. Silence dismisses it; reported key repeats do not
+confirm. Legacy terminals cannot distinguish auto-repeat from separate presses.
+Other keys pass through, and targeted `app.input` remains available.
+The mode defaults to false on each Runtime start; callers reapply it after
+recovery. Set `confirmExit: false` to restore physical Ctrl+C delivery. The mode
+and confirmation window are shared by attached Clients. Failed termination
+shows a retry hint and leaves the Instance available.
+
 `instance.stop` (and CLI `smolmux stop`) has stronger semantics in both modes:
 it ends **all** local and Companion Sessions before replying and shutting down.
 If termination cannot be confirmed, the API fails and leaves the Instance
@@ -210,6 +224,7 @@ const host = await startForeground({ name: "example" })
 let hideTimer: ReturnType<typeof setTimeout> | undefined
 try {
   const c = host.client
+  await c.request("instance.configure", { confirmExit: true })
   await c.request("layout.apply", { root: null, visible: [], focus: null })
   await c.request("app.create", {
     name: "shell", pty: "local", argv: ["/bin/sh"], cwd: process.cwd(),

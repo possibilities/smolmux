@@ -1,4 +1,5 @@
 import { type CliRenderer, CliRenderEvents, type Selection } from "@opentui/core"
+import { ExitConfirmation } from "./exit-confirmation.ts"
 import { EventFeed } from "./event-feed.ts"
 import { VERSION } from "./cli.ts"
 import { fxnkRamp, type FxnkThemeResolution } from "./host-palette.ts"
@@ -52,6 +53,7 @@ export function defaultLayout(names: readonly string[]): { root: LayoutNode; foc
  */
 export class Runtime {
   readonly apps: Apps
+  private readonly exitConfirmation: ExitConfirmation
   readonly stage: Stage
   private readonly feed: EventFeed
   private availability: "ready" | "incomplete" | "unavailable" = "unavailable"
@@ -94,6 +96,8 @@ export class Runtime {
       theme: options.theme,
       onChanged: (cause) => this.publish("layout.changed", { layout: this.stage.view, apps: this.apps.list(), cause }),
     })
+    this.exitConfirmation = new ExitConfirmation(renderer, options.theme,
+      () => this.handle("instance.stop", {}), line => options.report?.(line))
     this.lastStage = this.stage.size
     this.renderer.on(CliRenderEvents.SELECTION, this.selectionHandler)
     this.renderer.on(CliRenderEvents.RESIZE, this.resizeHandler)
@@ -157,6 +161,7 @@ export class Runtime {
     this.theme = resolution
     this.renderer.setBackgroundColor(fxnkRamp(resolution.theme).background)
     this.stage.setTheme(resolution)
+    this.exitConfirmation.setTheme(resolution)
     this.apps.setTheme(resolution)
     this.renderer.requestRender()
     this.publish("theme.changed", { theme: resolution.theme })
@@ -165,6 +170,7 @@ export class Runtime {
   async shutdown(exitCode = 0): Promise<void> {
     if (this.shuttingDown) return this.donePromise
     this.shuttingDown = true
+    this.exitConfirmation.dispose()
     try {
       this.renderer.off(CliRenderEvents.SELECTION, this.selectionHandler)
       this.renderer.off(CliRenderEvents.RESIZE, this.resizeHandler)
@@ -193,6 +199,11 @@ export class Runtime {
         return this.feed.snapshot()
       case "instance.status":
         return this.status()
+      case "instance.configure": {
+        const { confirmExit } = params as Params<"instance.configure">
+        this.exitConfirmation.configure(confirmExit)
+        return {}
+      }
       case "instance.stop": {
         // Seal before killing: a create already queued behind another one
         // would otherwise start its process after the kills went out and

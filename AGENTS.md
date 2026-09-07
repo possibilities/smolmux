@@ -17,10 +17,14 @@
 - The CLI is `start`, `attach`, `stop`, `status`, `api`, `doctor`, `event-socket`, and the
   hidden `runtime` verb the Companion execs. Do not add a verb for anything
   the API owns. `smolmux` with no verb starts if needed and attaches.
-- smolmux claims exactly one chord. The prefix (`ctrl+b`) is a latch the thin
+- By default smolmux claims exactly one chord. The prefix (`ctrl+b`) is a latch the thin
   Client holds until the next key proves it is not Detach; every other key,
   the prefix included, reaches the focused Session unchanged. There is no
-  help surface, no switching key, no toggle. `config.toml` holds `[keys]`
+  help surface, no switching key, no toggle. Callers may opt in through
+  `instance.configure({confirmExit:true})` to reserve physical Ctrl+C for a
+  three-second two-press `instance.stop` of all Sessions and the Runtime.
+  Its centered one-row overlay must never change Layout, Focus or Session size.
+  `config.toml` holds `[keys]`
   with `prefix` and `detach` and nothing else — that grammar is deliberately
   shared with Herdr's, but do not mention Herdr in user-facing text.
 - **Stage owns Focus.** App leaves default to `focusMode: "click"`; physical

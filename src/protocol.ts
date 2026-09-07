@@ -321,6 +321,10 @@ export const METHODS = {
   "instance.status": {
     description: "Runtime, host mode, capabilities, Apps and Layout.", params: empty, result: instanceStatusSchema,
   },
+  "instance.configure": {
+    description: "Configure physical Ctrl+C: confirmExit reserves it for a three-second, two-press stop of all Sessions and the Runtime. Disabled by default; Runtime-local, shared by Clients. Targeted app.input is unaffected.",
+    params: z.object({ confirmExit: z.boolean() }).strict(), result: empty,
+  },
   "instance.stop": {
     description: "Seal declarations, end every local and Companion process, then reply and stop. A failed termination leaves the Instance available to retry.",
     params: empty, result: empty,

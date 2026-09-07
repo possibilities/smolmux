@@ -372,3 +372,41 @@ test("selection drags do not move Focus into a neighbouring Pane", async () => {
     expect(reports.some(report => report.startsWith("\x1b[<0;") && report.endsWith("M"))).toBe(true)
   } finally { h.close() }
 })
+
+test("exit confirmation covers one centered row without changing Panes or Focus", async () => {
+  const { ExitConfirmation } = await import("../src/exit-confirmation.ts")
+  const h = await harness(["a", "b"], 80, 12)
+  const confirmation = new ExitConfirmation(h.setup.renderer,
+    { theme: "dark", background: null, source: "default", explicit: false }, async () => {}, () => {})
+  try {
+    h.stage.apply({ row: [{ app: "a" }, { app: "b" }] }, "a")
+    await h.setup.renderOnce()
+    const before = h.setup.captureCharFrame()
+    const view = h.stage.view
+    const resizes = new Map(h.resizes)
+    confirmation.configure(true)
+    h.setup.mockInput.pressCtrlC()
+    await h.setup.renderOnce()
+    const lines = h.setup.captureCharFrame().split("\n")
+    expect(lines[11]!.trim()).toBe("press ctrl+c again to exit")
+    expect(lines[11]!.indexOf("press")).toBe(27)
+    expect(lines.slice(0, 11)).toEqual(before.split("\n").slice(0, 11))
+    expect(h.stage.view).toEqual(view)
+    expect(h.resizes).toEqual(resizes)
+    h.setup.renderer.resize(60, 8)
+    h.stage.refit("resize")
+    await h.setup.renderOnce()
+    const resized = h.setup.captureCharFrame().split("\n")
+    expect(resized[7]!.trim()).toBe("press ctrl+c again to exit")
+    expect(resized[7]!.indexOf("press")).toBe(17)
+    h.setup.renderer.resize(80, 12)
+    h.stage.refit("resize")
+    await h.setup.renderOnce()
+    const afterResize = new Map(h.resizes)
+    confirmation.setTheme({ theme: "light", background: null, source: "default", explicit: false })
+    confirmation.configure(false)
+    await h.setup.renderOnce()
+    expect(h.setup.captureCharFrame()).toBe(before)
+    expect(h.resizes).toEqual(afterResize)
+  } finally { confirmation.dispose(); h.close() }
+})

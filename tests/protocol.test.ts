@@ -27,6 +27,7 @@ describe("the contract", () => {
       "app.restart",
       "client.copy",
       "event.subscribe",
+      "instance.configure",
       "instance.status",
       "instance.stop",
       "layout.apply",

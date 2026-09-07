@@ -84,6 +84,23 @@ Runtime implementations; a launch can still fail if its helper cannot be resolve
 
 Params `{}`. Returns the complete `InstanceStatus` above.
 
+### `instance.configure`
+
+Params: `{confirmExit: boolean}`. Returns `{}`. Configures a Runtime-local
+physical keyboard policy, disabled on every new Runtime. It is shared by all
+Clients and must be reapplied after recovery; configuring it clears a pending
+confirmation. This transient policy is not included in the state projection.
+
+When enabled, Ctrl+C is consumed before delivery to any App. The first press
+shows centered `press ctrl+c again to exit` in a single bottom-row overlay;
+a second press within three seconds invokes `instance.stop`, ending all local
+and Companion Sessions and the Runtime. The overlay does not alter Layout,
+Revision, Focus, Pane geometry or Session size. Timeout dismisses it. Reported
+repeat/release events cannot confirm (legacy terminals cannot distinguish
+repeats). Other keys and targeted `app.input` retain their normal behavior.
+A stop failure is logged and shown as a retry hint; a new pair of presses retries.
+Signals still follow the host's ordinary shutdown semantics.
+
 ### `instance.stop`
 
 Params `{}`. Seals declarations synchronously, waits for queued App work,
