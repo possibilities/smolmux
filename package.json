@@ -8,6 +8,9 @@
     "smolmux": "./src/index.ts"
   },
   "scripts": {
+    "explorer": "bun examples/explorer/serve.ts",
+    "explorer:build": "bun examples/explorer/build.ts",
+    "explorer:check": "bun examples/explorer/check-browser.ts",
     "generate:events-schema": "bun src/event-schema.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
@@ -20,7 +23,12 @@
     "zod": "4.5.2"
   },
   "devDependencies": {
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/space-grotesk": "^5.3.0",
+    "@playwright/test": "^1.63.0",
     "@types/bun": "^1.4.0",
+    "@types/three": "^0.185.4",
+    "three": "^0.185.1",
     "typescript": "^5.9.3"
   },
   "overrides": {

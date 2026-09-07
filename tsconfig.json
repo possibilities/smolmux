@@ -12,5 +12,5 @@
     "types": ["bun-types"],
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts", "ui-gallery/**/*.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts", "ui-gallery/**/*.ts", "examples/**/*.ts"]
 }

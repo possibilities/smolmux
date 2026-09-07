@@ -152,6 +152,37 @@ another file and `XDG_CONFIG_HOME` selects another default directory.
 terminal or first attached Client supplies the terminal background, and live
 terminal theme notifications update the complete palette.
 
+## Explore an Instance in 3D
+
+The [observatory example](examples/explorer/README.md) is a local browser
+application built on the same public API. From this checkout:
+
+```sh
+bun install --frozen-lockfile
+bun run explorer                 # open the full local URL it prints
+# bun run explorer --port 0      # choose an available port automatically
+```
+
+Its Instance menu discovers answering, user-owned API sockets across configuration
+directories. Spatial view unfolds the Stage and places hidden and squeezed-out
+Apps below it. Stage view restores fitted proportions. Every declared App remains
+in the list, including stopped, paused, exited, failed and unreachable Apps.
+Selecting an App reads its terminal Capture and recent history without changing
+Focus; the activity strip counts observed output events, not CPU or process work.
+
+**Focus on Stage** preserves the Layout and visible set. **Reveal beside the
+Layout** adds an App without hiding any other App, and may resume or start it
+according to its hidden policy. Both actions check the Runtime lifetime and
+Layout Revision. A small Stage or a Pane with `focusMode: "never"` refuses the
+action. The browser reconnects after a lost connection but never replays an
+action whose outcome is unknown.
+
+When no Instance is running, a labeled demo provides an explorable sample; its
+actions affect only that sample. Start a real application and select it from the
+menu when ready. The explorer binds only to loopback, serves its fonts and scripts
+locally, and stops independently of every Instance. It adds no smolmux CLI verb
+or Runtime API method.
+
 ## A first API workflow
 
 Use the Bun client exports from a source dependency (for sibling checkouts,

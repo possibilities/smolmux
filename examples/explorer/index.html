@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#e9f0f3" />
+    <meta
+      name="description"
+      content="Explore every App in a running smolmux Instance, including the ones you cannot see on Stage."
+    />
+    <title>smolmux observatory</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/explorer.css" />
+    <script type="module" src="/assets/explorer.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="wordmark" href="/" aria-label="smolmux observatory"
+        ><svg viewBox="0 0 40 40" aria-hidden="true">
+          <path d="m5 21 15-9 15 9-15 9zM5 13l15-9 15 9M5 29l15 9 15-9" /></svg
+        ><span>smolmux <strong>observatory</strong></span></a
+      >
+      <button id="instance-switch" class="instance-switch" aria-haspopup="dialog">
+        <span class="instance-symbol">◈</span><span id="instance-name">Choose an Instance</span
+        ><span class="chevron">⌄</span>
+      </button>
+      <div class="connection">
+        <span class="connection-dot" id="connection-dot"></span><span id="connection-text">Connecting</span>
+      </div>
+    </header>
+    <main class="workspace">
+      <aside class="roster" aria-label="Apps in this Instance">
+        <div class="roster-heading">
+          <h1>All Apps</h1>
+          <span id="app-count" class="count">0</span>
+        </div>
+        <label class="search"
+          ><svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="10" cy="10" r="6" />
+            <path d="m15 15 5 5" /></svg
+          ><input id="app-search" type="search" placeholder="Find an App" aria-label="Find an App" autocomplete="off"
+        /></label>
+        <div id="filters" class="filters" aria-label="Filter Apps">
+          <button data-filter="all" aria-pressed="true">All</button
+          ><button data-filter="shown" aria-pressed="false">On Stage</button
+          ><button data-filter="hidden" aria-pressed="false">Hidden</button>
+        </div>
+        <div id="app-list" class="app-list"></div>
+        <div class="roster-footer">
+          <div class="roster-note">One Instance.<br />Every dimension.</div>
+          <p>Explore freely. Use the inspector to change terminal Focus.</p>
+          <button id="demo-button" class="text-button">Explore the demo</button>
+        </div>
+      </aside>
+      <section class="scene-region" aria-label="3D Instance visualization">
+        <div class="scene-heading">
+          <div>
+            <p id="scene-kicker">Live Instance anatomy</p>
+            <h2 id="scene-title">A place for every App.</h2>
+            <p id="scene-summary">Choose an Instance to unfold its terminals.</p>
+          </div>
+          <span class="scene-index" aria-hidden="true">⌘</span>
+        </div>
+        <div
+          id="viewport"
+          class="viewport"
+          tabindex="0"
+          aria-label="3D scene. Drag to orbit, scroll to zoom. Use the App list to select with the keyboard."
+        ></div>
+        <div id="scene-empty" class="scene-empty" hidden>
+          <h3>No Apps yet</h3>
+          <p>Declared Apps appear here, even when they have no Pane on Stage.</p>
+        </div>
+        <div class="scene-tools">
+          <div class="view-switch" aria-label="Scene view">
+            <button id="spatial-view" aria-pressed="true">Spatial</button
+            ><button id="stage-view" aria-pressed="false">Stage</button>
+          </div>
+          <label class="spread-control" for="spread"
+            >Separation<input id="spread" type="range" min="0" max="100" value="65" /></label
+          ><button id="reset-view" class="icon-button" aria-label="Reset camera" title="Reset camera">↺</button>
+        </div>
+        <div class="scene-caption">
+          <span><i class="legend-dot shown"></i>On Stage</span><span><i class="legend-dot hidden-app"></i>Hidden</span
+          ><span><i class="legend-dot paused"></i>Paused / stopped</span
+          ><span class="gesture-hint">Drag to orbit · Scroll to zoom</span>
+        </div>
+        <div id="demo-banner" class="demo-banner" hidden>
+          Demo Instance <span>Illustrative terminals. Navigation stays in the demo.</span>
+        </div>
+      </section>
+      <aside class="inspector" aria-label="Selected App inspector">
+        <div class="inspector-heading"><span>App inspector</span><span id="selected-position"></span></div>
+        <div id="inspector-empty" class="inspector-empty">
+          <span class="empty-glyph">⌖</span>
+          <h2>Look a little closer.</h2>
+          <p>Select a terminal in the scene or choose an App from the list.</p>
+        </div>
+        <div id="inspector-content" hidden>
+          <div class="app-title">
+            <h2 id="selected-name"></h2>
+            <span id="selected-state" class="state-badge"></span>
+          </div>
+          <p id="selected-title" class="selected-title"></p>
+          <div
+            id="activity-bars"
+            class="activity-bars"
+            aria-label="Observed output events over the last 30 seconds"
+          ></div>
+          <div class="activity-caption">
+            <span>Observed output</span><span id="activity-count">0 events / 30s</span>
+          </div>
+          <div class="capture-heading">
+            <h3>Terminal Capture</h3>
+            <span id="capture-state">Waiting</span>
+          </div>
+          <pre id="capture" class="capture" tabindex="0" aria-label="Terminal Capture"></pre>
+          <div class="capture-controls">
+            <button id="history-button" class="text-button">Recent history</button
+            ><button id="live-button" class="text-button" hidden>Return to live</button><span id="capture-size"></span>
+          </div>
+          <dl id="app-details" class="app-details"></dl>
+          <p id="app-error" class="app-error" hidden></p>
+          <div class="navigation">
+            <button id="navigate-button" class="primary-button">Focus on Stage</button>
+            <p id="navigate-hint"></p>
+          </div>
+        </div>
+      </aside>
+    </main>
+    <footer class="statusbar">
+      <span id="status-summary">Looking for running Instances</span><span id="revision">Local to this computer</span>
+    </footer>
+    <div id="toast" class="toast" role="status" hidden></div>
+    <dialog id="instance-dialog" aria-labelledby="instance-dialog-title">
+      <div class="dialog-heading">
+        <div>
+          <p>Explore your system</p>
+          <h2 id="instance-dialog-title">Choose an Instance</h2>
+        </div>
+        <button id="close-dialog" class="icon-button" aria-label="Close Instance menu">×</button>
+      </div>
+      <label class="search"
+        ><svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="10" cy="10" r="6" />
+          <path d="m15 15 5 5" /></svg
+        ><input
+          id="instance-search"
+          type="search"
+          placeholder="Find a running Instance"
+          aria-label="Find a running Instance"
+      /></label>
+      <div id="instance-list" class="instance-list"></div>
+      <p id="discovery-note" class="discovery-note"></p>
+      <div class="dialog-footer">
+        <button id="refresh-instances" class="text-button">Refresh discovery</button
+        ><button id="dialog-demo" class="secondary-button">Explore demo</button>
+      </div>
+    </dialog>
+  </body>
+</html>
