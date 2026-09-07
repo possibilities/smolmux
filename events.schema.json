@@ -114,6 +114,48 @@
             },
             "method": {
               "type": "string",
+              "const": "instance.configure"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "confirmExit": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "confirmExit"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 2
+            },
+            "type": {
+              "type": "string",
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "method": {
+              "type": "string",
               "const": "instance.stop"
             },
             "params": {
@@ -2016,6 +2058,41 @@
                 "capabilities",
                 "layout"
               ]
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "ok",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 2
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": false
             }
           },
           "required": [

@@ -510,3 +510,19 @@ test("event snapshots distinguish failed adoption, unknown inventory, and known 
     } finally { await app.close() }
   }
 })
+
+test("configured Ctrl+C stops all Sessions including hidden Companion Apps", async () => {
+  const app = await harness()
+  try {
+    for (const name of ["shown", "hidden"]) {
+      await app.call("app.create", { pty: "companion", name, argv: [FAKE_APP], cwd: process.cwd() })
+    }
+    await app.call("instance.configure", { confirmExit: true })
+    app.setup.mockInput.pressCtrlC()
+    expect(app.companion.killed).toEqual([])
+    app.setup.mockInput.pressCtrlC()
+    await app.runtime.waitUntilDone()
+    expect(app.companion.killed.sort()).toEqual([`smolmux-${INSTANCE}-hidden`, `smolmux-${INSTANCE}-shown`])
+    expect(app.events.some(event => event.event === "instance.stopping")).toBe(true)
+  } finally { await app.close() }
+})
