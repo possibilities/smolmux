@@ -1,7 +1,10 @@
 # The Companion's labels are the record; smolmux stores nothing
 
+Status review 2026-09-08: partially superseded.
+[ADR 0024](0024-app-declarations-own-process-policy.md) replaces Session-only identity with Apps and UUID-identified executions; the caller still owns Layout and the Runtime gains no persistent manifest.
+
 Supersedes the Manifest of [ADR 0005](0005-agent-tray-vocabulary.md) and the
-persisted UI state of [ADR 0014](0014-independent-named-smolmux.md). ADR 0014's
+persisted UI state of [ADR 0014](0014-independent-named-smolmux.md). [ADR 0014](0014-independent-named-smolmux.md)'s
 own subject, the `--name` flag and the independence it gives an Instance,
 remains in force.
 

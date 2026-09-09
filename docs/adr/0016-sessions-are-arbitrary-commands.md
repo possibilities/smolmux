@@ -1,5 +1,8 @@
 # A Session is any command, and smolmux knows nothing about it
 
+Status review 2026-09-08: partially superseded.
+[ADR 0024](0024-app-declarations-own-process-policy.md) makes Apps the stable declarations and [ADR 0025](0025-local-ownership-and-foreground-hosts.md) adds local PTYs. Arbitrary commands and caller-owned harness meaning remain.
+
 Supersedes [ADR 0005](0005-agent-tray-vocabulary.md),
 [ADR 0006](0006-native-session-names-over-ade.md),
 [ADR 0008](0008-ade-only-fx-lifecycle.md), and

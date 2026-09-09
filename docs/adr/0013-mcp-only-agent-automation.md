@@ -6,7 +6,7 @@ with one socket API.
 
 smolmux removes its automation CLI and makes the separate stdio `smolmux-mcp`
 executable the only supported agent-facing interface, superseding the client
-choices in ADRs 0002, 0010, and 0011. MCP exposes Orientation, Agent creation
+choices in ADRs [0002](0002-control-socket-beside-ade-feed.md), [0010](0010-runtime-bus-events.md), and [0011](0011-one-duplex-runtime-bus.md). MCP exposes Orientation, Agent creation
 and focus, Tray configuration, and Fx-native snapshot, queue, steer, interrupt,
 queued-work update/delete, and queue-resume operations.
 

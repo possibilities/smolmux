@@ -1,6 +1,13 @@
-# Source-only installation
+# 0028: Source-only installation
 
-Status: accepted; supersedes ADR 0001.
+Status review 2026-09-08: partially superseded.
+Source-only distribution remains accepted. [ADR 0016](0016-sessions-are-arbitrary-commands.md) removes the pinned Fx build named below; the current source installer builds the pinned Companion and runs doctor.
+
+Identifier corrected 2026-09-08: formerly `0002-source-only-installation.md`. The old number
+was shared by another decision; this record retains its original rationale.
+See the [identifier history](README.md#identifier-history).
+
+Status: accepted; supersedes [ADR 0001](0001-native-release-distribution.md).
 
 Smolmux no longer publishes native archives, an installer payload, checksums,
 release tags, or a latest-version pointer. Consumers clone the repository and

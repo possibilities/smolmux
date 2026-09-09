@@ -7,8 +7,10 @@
   added. Generic App ownership and hidden policies belong here. A program that needs those reads screens through `app.capture`
   and owns them itself.
 - `CONTEXT.md` is the glossary; use its terms in code, docs, and commits.
-  `docs/adr/` holds the decisions, and a superseded record keeps the words it
+  [The decision index](docs/adr/README.md) links current and historical decisions, and a superseded record keeps the words it
   was written with rather than being rewritten.
+## API and input contract
+
 - **The API is the product.** Every method, param, result, event, and error
   code is defined once in the contract table in `src/protocol.ts`, validated
   by the Runtime from that definition, printed by `smolmux api`, and described in
@@ -33,6 +35,8 @@
   `takeFocus`. Targeted `app.input`, including mouse reports, never moves Focus.
   A click that changes Focus increments Revision and publishes `layout.changed`
   with cause `focus`, without refitting or running hidden policies.
+## Layout and terminal observation
+
 - Applying a Layout must mutate only what moved. Every Pane is absolutely
   positioned at the rectangle `layout.ts` computed, so one apply is one
   layout pass; a Pane whose rectangle is unchanged is not resized, so its
@@ -93,6 +97,8 @@
   the stage narrows.
 - `Stage.apply` draws before it commits. A tree it cannot draw is rolled back,
   or every later refit would throw again for the life of the Runtime.
+## Socket and frame handling
+
 - A frame is refused before `JSON.parse` sees it when it nests too deep: the
   parser is recursive and its overflow is a `RangeError`, not a validation
   failure, so the caller would get no reply at all. Every refusal carries the
@@ -104,6 +110,8 @@
 - smolmux's clear goes straight to the terminal, which OpenTUI's diff cannot see,
   so `Runtime.repaint` forces the next frame to draw in full. Without it a
   same-size resize or a same-theme retint leaves the cleared stage standing.
+## Instance identity and runtime ownership
+
 - **The API socket is the Instance singleton.** It is claimed under a lock
   before anything is adopted, so two Runtimes can never hold the same
   Sessions, and requests arriving during adoption wait rather than being told
@@ -125,6 +133,8 @@
   no Companion for local Apps. Foreground terminal loss/signals kill locals and
   release Companion Sessions; instance.stop confirms termination of both owners.
   Do not restore --exit-on-last-client or a bootstrap marker.
+## Rendering and terminal clients
+
 - Theme: a headless Runtime asks nothing (`resolveFxnkTheme` with a zero
   timeout takes `SMOLMUX_THEME`, then `COLORFGBG`, then dark), and the first
   Client samples its own terminal before relaying anything, then sends the
@@ -152,6 +162,8 @@
   Client. There is deliberately no Detach method: a program does not own a
   physical terminal connection. Detaching never ends a Session or the
   Runtime.
+## Session transport and shutdown
+
 - Everything that carries a Session's terminal goes through
   `SessionTransport` (`src/session-transport.ts`). Companion and local transports
   carry terminal bytes; Apps own policy and Sessions own one execution/emulator.
@@ -202,6 +214,8 @@
 - Companion Exit byte 3 bit 0 means status unknown; zero is the legacy known
   status. Decode unknown code and signal as null on both the live wire and
   discovery records, preserving reason through Transport and App exit events.
+## Private state and source installation
+
 - A child's environment is smolmux's own with `SMOLMUX_*`, `ZMX_*`, `TMUX*`, and
   `HERDR_*` removed, plus the caller's `env`. A Session must never be able to
   tell it is inside smolmux, or report against an outer pane.
@@ -244,6 +258,8 @@
   which in an ADR. Drain is the cheaper first answer. Until one exists, the
   protocol version does not move. Note that `src/protocol.ts` is smolmux's own
   API version and is unrelated.
+
+## Events and App lifecycle
 
 - The event feed uses a random Runtime lifetime `instanceId`, distinct from the
   stable Instance id used for sockets and adoption. `event.subscribe` replaces

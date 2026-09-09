@@ -1,5 +1,8 @@
 # Input is part of the control surface
 
+Status review 2026-09-08: partially superseded.
+[ADR 0030](0030-pane-focus-policy.md) replaces API-only Focus with explicit pane policy. Targeted input still does not move Focus.
+
 Supersedes one clause of [ADR 0015](0015-a-socket-is-the-whole-control-surface.md):
 that the socket carries no way to type into a Session. Everything else that
 record decided still holds — one duplex socket past `start`, `stop` and

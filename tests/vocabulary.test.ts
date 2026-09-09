@@ -85,15 +85,13 @@ describe("canonical public vocabulary", () => {
     }
   })
 
-  test("a decision reference names its file, because two records share a number", async () => {
-    const records = await readdir(join(ROOT, "docs/adr"))
+  test("decision identifiers are unique and references name their files", async () => {
+    const records = (await readdir(join(ROOT, "docs/adr"))).filter((path) => /^\d{4}-.*\.md$/u.test(path))
     const numbers = records.map((path) => path.slice(0, 4))
-    expect(new Set(numbers).size, "renumbering would rewrite history; references name files instead").toBeLessThan(
-      numbers.length,
-    )
+    expect(new Set(numbers).size, "each decision needs one unambiguous identifier").toBe(numbers.length)
     for (const path of records.filter((name) => /^001[5-9]/u.test(name))) {
       const text = await readFile(join(ROOT, "docs/adr", path), "utf8")
-      // No bare "ADRs 0002, 0010" style reference, which the duplicates make ambiguous.
+      // File links keep a reference tied to its decision through title or identifier corrections.
       expect(text, `${path} references a decision by bare number`).not.toMatch(/ADRs \d{4}/u)
     }
   })

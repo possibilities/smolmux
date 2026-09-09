@@ -9,8 +9,7 @@ Supersedes [ADR 0013](0013-mcp-only-agent-automation.md), and with it the
 client choices of [the control socket beside the ADE
 feed](0002-control-socket-beside-ade-feed.md),
 [ADR 0010](0010-runtime-bus-events.md), and
-[ADR 0011](0011-one-duplex-runtime-bus.md). Two records share the number
-0002 and two share 0007; a reference names the file rather than the number.
+[ADR 0011](0011-one-duplex-runtime-bus.md). References name the complete file; the [identifier history](README.md#identifier-history) records the former number collisions.
 
 Everything past `start`, `stop`, and `attach` is one duplex, mode-0600 Unix
 socket per Instance carrying newline-delimited JSON. Nine methods and six

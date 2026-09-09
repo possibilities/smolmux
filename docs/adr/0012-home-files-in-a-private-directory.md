@@ -1,5 +1,8 @@
 # smolmux Session files live in a private directory
 
+Status review 2026-09-08: partially superseded.
+[ADR 0016](0016-sessions-are-arbitrary-commands.md) removes ADE/Fx paths; [ADR 0017](0017-the-runtime-is-headless.md) makes the API socket the singleton. The private, owner-checked runtime-directory boundary remains.
+
 smolmux binds each smolmux Session's ADE socket, Runtime bridge, and singleton lock inside
 `/tmp/smolmux-<uid>`, created 0700 and refused when it is not ours or is open to
 others, rather than placing its own names directly in world-writable `/tmp`.

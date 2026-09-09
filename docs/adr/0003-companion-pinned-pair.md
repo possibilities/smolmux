@@ -1,3 +1,6 @@
 # The companion is pinned, and the pair is the release
 
+Status review 2026-09-08: partially superseded.
+[0028](0028-source-only-installation.md) replaces binary-release distribution. Exact Companion build identity remains required; “release” below describes the historical distribution and ordering rationale.
+
 smolmux ships `smolmux-zmx` beside itself, built from the one fork commit named in `companion.json`, and refuses to start against any other build it finds beside itself or on `PATH`; only `SMOLMUX_ZMX_PATH` may name an unpinned build, and smolmux says so when it does. The alternative — accepting any companion whose protocol negotiates — would let a half-updated installation or a stray binary run quietly on whatever the two happen to agree on, and the protocol is the pair's, not a public contract. The price is that a checkout cannot use an installed companion unless the pin matches, and that moving the pin is a release act rather than a dependency bump. The installer places `smolmux` before `smolmux-zmx`: a failure between the two leaves a new smolmux that refuses whatever companion is there, where the other order would leave an smolmux from before the pin — which checked nothing — running quietly against a companion it never asked about.

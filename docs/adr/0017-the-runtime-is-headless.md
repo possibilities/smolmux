@@ -1,5 +1,8 @@
 # The Runtime is headless, and its socket is the Instance singleton
 
+Status review 2026-09-08: partially superseded.
+[ADR 0025](0025-local-ownership-and-foreground-hosts.md) adds foreground hosting and local Session ownership. The headless mode and guarded API singleton remain.
+
 Supersedes the final-Client lifecycle of [a Companion-held Runtime serves
 every terminal Client](0007-companion-held-shared-runtime.md). The rest of
 that record — one shared Runtime, and sizing that follows the most recently
