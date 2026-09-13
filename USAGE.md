@@ -1,6 +1,6 @@
 # Using smolmux from an agent or application
 
-Verified against smolmux **0.10.0**, API **2**.
+Verified against smolmux **0.10.1**, API **2**.
 
 smolmux is a terminal surface you program. You declare arbitrary commands,
 choose who owns their PTYs, arrange their terminals in a Layout, and drive them
@@ -647,7 +647,7 @@ For implementation invariants and tests, start at [AGENTS.md](AGENTS.md),
 
 ## Upgrade the application and API together
 
-Version 0.10.0 uses API 2, observable stop attempts, and App/Session UUID
+Version 0.10.1 uses API 2, observable stop attempts, and App/Session UUID
 labels. API 1 methods and old Session labels are not accepted or adopted;
 there are no compatibility aliases. Stop old Instances with their existing
 applications/binaries before installing the new source, then start fresh.
@@ -657,3 +657,8 @@ Companion pin and wire protocol do not change in this release.
 Resize reaches commands through their PTY and SIGWINCH. smolmux reports DEC
 mode 2048 (in-band resize notifications) as unsupported so TUIs such as nvim
 continue responding to terminal resizing.
+
+During stop, the frozen surface owns a concealed cursor as well as its pixels.
+An App revealing its cursor during teardown cannot expose an active cursor over
+that inert frame. A Client restores the main screen before revealing the shell
+cursor on terminal handback.

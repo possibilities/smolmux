@@ -33,6 +33,8 @@ export type RuntimeOptions = {
   socketPath: string
   theme: FxnkThemeResolution
   host?: "headless" | "foreground"
+  /** The terminal host brackets native restoration as one synchronized update. */
+  beforeTerminalRestore?: () => void
   adopt?: boolean
   sessions: Omit<AppsOptions, "renderer" | "theme" | "onExit" | "onChanged" | "onState" | "onRoster">
   publish: (event: EventName, data: unknown) => void
@@ -214,9 +216,12 @@ export class Runtime {
         this.stage.destroy()
       }
     } finally {
-      this.renderer.destroy()
-      process.exitCode = exitCode
-      this.resolveDone()
+      try { this.options.beforeTerminalRestore?.() }
+      finally {
+        this.renderer.destroy()
+        process.exitCode = exitCode
+        this.resolveDone()
+      }
     }
   }
 

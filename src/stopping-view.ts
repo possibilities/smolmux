@@ -30,6 +30,9 @@ export class StoppingView {
       onMouseDrag: stopMouse,
       onMouseDragEnd: stopMouse,
       renderAfter: (target) => {
+        // The frozen pixels do not own the hardware cursor. A focused Session
+        // underneath can reveal it while handling its termination signal.
+        renderer.setCursorPosition(0, 0, false)
         if (!this.snapshot) return
         target.drawFrameBuffer(
           0, 0, this.snapshot, 0, 0,

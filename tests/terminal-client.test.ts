@@ -213,7 +213,9 @@ test("a cleanup Detach race cannot overwrite a verified Runtime exit", async () 
     expect(await running).toBe(0)
     expect(closed).toBe(true)
     expect(stdin.isRaw).toBe(false)
-    expect(writes.join("")).toContain("\x1b[?25h")
+    const cleanup = writes.join("")
+    expect(cleanup).toContain("\x1b[?25h")
+    expect(cleanup.lastIndexOf("\x1b[?1049l")).toBeLessThan(cleanup.lastIndexOf("\x1b[?25h"))
   } finally { connect.mockRestore() }
 })
 
@@ -245,6 +247,8 @@ test("unknown Runtime exit status reports a diagnostic and restores the terminal
     exit({ code: null, signal: null, reason: 0 })
     expect(await outcome).toMatchObject({ message: "the Runtime ended; its exit status is unknown after a Companion handoff" })
     expect(stdin.isRaw).toBe(false)
-    expect(writes.join("")).toContain("\x1b[?25h")
+    const cleanup = writes.join("")
+    expect(cleanup).toContain("\x1b[?25h")
+    expect(cleanup.lastIndexOf("\x1b[?1049l")).toBeLessThan(cleanup.lastIndexOf("\x1b[?25h"))
   } finally { connect.mockRestore() }
 })

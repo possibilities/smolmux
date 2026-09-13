@@ -420,11 +420,12 @@ test.skipIf(!ENABLED)(
     let first: ApiClient | null = null
     let second: ApiClient | null = null
     let localPid: number | null = null
+    let output = ""
     try {
       foreground = Bun.spawn([...SMOLMUX_COMMAND, "start", "--foreground"], {
         cwd: ROOT,
         env,
-        terminal: { cols: 100, rows: 30, data: () => {} },
+        terminal: { cols: 100, rows: 30, data: (_pty, bytes) => { output += Buffer.from(bytes).toString() } },
       })
       await waitUntil(() => answers(socketPath), 10_000)
       first = await ApiClient.connect(socketPath)
@@ -448,6 +449,15 @@ test.skipIf(!ENABLED)(
       expect(Date.now() - started).toBeLessThan(7_000)
       await waitUntil(() => !processExists(localPid!))
       expect(await answers(socketPath)).toBe(false)
+      // Native renderer teardown reveals its cursor before leaving the alternate
+      // screen. The host must commit that entire restoration atomically.
+      const handback = output.lastIndexOf("\x1b[?1049l")
+      const reveal = output.lastIndexOf("\x1b[?25h", handback)
+      expect(handback).toBeGreaterThan(0)
+      expect(reveal).toBeGreaterThan(0)
+      expect(output.lastIndexOf("\x1b[?2026h", reveal)).toBeGreaterThan(output.lastIndexOf("\x1b[?2026l", reveal))
+      expect(output.lastIndexOf("\x1b[?25h")).toBeGreaterThan(handback)
+      expect(output.lastIndexOf("\x1b[?2026l")).toBeGreaterThan(handback)
     } finally {
       first?.close()
       second?.close()

@@ -144,7 +144,7 @@ Apps. The Instance remains sealed: state/status, `app.list`, `app.capture`, and
 `layout.get` remain readable, while mutations are refused. A later
 `instance.stop` creates a new attempt against observed survivors.
 
-The stopping surface freezes the last committed frame as inert context before
+The stopping surface conceals the cursor and freezes the last committed frame as inert context before
 Session renderables disappear. One quiet bottom row shows preparation,
 termination, completion, or a failure with a retry path. API state remains the
 live process truth throughout.

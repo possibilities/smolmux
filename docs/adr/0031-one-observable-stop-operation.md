@@ -40,6 +40,14 @@ Session renderables disappear. Failure names remaining work and a retry; API
 state continues to report actual Apps and Sessions. Completion restores the
 terminal once, without an intentionally blank intermediate Layout.
 
+The inert surface owns cursor concealment on every render, after underlying
+Sessions render. A framebuffer copy alone does not cover the hardware cursor: a
+focused App can reveal or home it while handling termination. Client handback
+restores the main screen and saved cursor position before revealing the cursor.
+The host brackets native renderer restoration as one synchronized terminal
+update, because the renderer resets cursor modes before leaving its alternate
+screen. This keeps the stopping surface inert while preserving normal shell behavior.
+
 The API envelope remains version 2. The methods, status field, result, and
 event are additive within the guarded Instance socket, while package version
 0.10.0 communicates the required Runtime capability. The Companion wire and

@@ -131,6 +131,7 @@ async function startHost(instance: Instance, foreground: boolean, environment: N
     }
     let theme = await resolveFxnkTheme(port, environment, 0)
     runtime = new Runtime(drawn, {
+      beforeTerminalRestore: () => process.stdout.write(beginSynchronizedFrame()),
       instanceId: instance.id, instanceName: instance.name, socketPath, host: foreground ? "foreground" : "headless", adopt, theme,
       sessions: { instanceId: instance.id, resolveCompanion: getCompanion, local, environment, report },
       publish: (event, data) => server.broadcast(eventFrame(event, data as never)), report,

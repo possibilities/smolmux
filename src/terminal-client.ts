@@ -15,8 +15,9 @@ const TERMINAL_CLEANUP = [
   "\x1b[?2004l", // bracketed paste off
   "\x1b[<u", // pop Kitty keyboard mode
   "\x1b[?7h", // autowrap on
-  `\x1b[0m${CURSOR_REVEAL}`, // attributes reset, cursor visible
-  "\x1b[?1049l", // main screen
+  "\x1b[0m", // attributes reset
+  "\x1b[?1049l", // restore the shell screen and cursor position first
+  CURSOR_REVEAL, // reveal only after terminal handback
 ].join("")
 
 const MODIFIER_ONLY_KEYS = new Set(["shift", "control", "ctrl", "alt", "meta", "option", "super", "hyper"])
