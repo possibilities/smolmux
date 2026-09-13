@@ -1,6 +1,6 @@
 # Using smolmux from an agent or application
 
-Verified against smolmux **0.10.1**, API **2**.
+Verified against smolmux **0.11.0**, API **2**.
 
 smolmux is a terminal surface you program. You declare arbitrary commands,
 choose who owns their PTYs, arrange their terminals in a Layout, and drive them
@@ -180,7 +180,11 @@ It defaults to `~/.config/smolmux/config.toml`; `SMOLMUX_CONFIG_PATH` selects
 another file and `XDG_CONFIG_HOME` selects another default directory.
 `SMOLMUX_THEME=dark` or `light` fixes the palette. Otherwise the foreground
 terminal or first attached Client supplies the terminal background, and live
-terminal theme notifications update the complete palette.
+terminal theme notifications update the complete palette. On attach, the
+Client presents its sampled background and physical size together. The stale
+headless Restore stays hidden until the Runtime has fitted and committed one
+full current frame, so startup opens directly at the attached terminal's size
+and palette.
 
 ## Explore an Instance in 3D
 
@@ -647,11 +651,12 @@ For implementation invariants and tests, start at [AGENTS.md](AGENTS.md),
 
 ## Upgrade the application and API together
 
-Version 0.10.1 uses API 2, observable stop attempts, and App/Session UUID
-labels. API 1 methods and old Session labels are not accepted or adopted;
+Version 0.11.0 uses API 2 and adds the `client.present` attach handshake. API 1
+methods and old Session labels are not accepted or adopted;
 there are no compatibility aliases. Stop old Instances with their existing
 applications/binaries before installing the new source, then start fresh.
-Controllers that use bounded preparation must require smolmux 0.10.0. The
+Controllers that use bounded preparation must require smolmux 0.10.0; Clients
+that require current-frame startup must require smolmux 0.11.0. The
 Companion pin and wire protocol do not change in this release.
 
 Resize reaches commands through their PTY and SIGWINCH. smolmux reports DEC

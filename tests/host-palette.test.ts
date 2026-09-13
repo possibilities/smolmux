@@ -172,6 +172,31 @@ test("a response fence arriving before OSC 11 keeps the bounded sample open", ()
   }
 })
 
+test("an attached Client sample supersedes an in-flight live-theme query", () => {
+  const port = new FakeThemePort()
+  const updates: string[] = []
+  const monitor = new FxnkThemeMonitor(
+    port,
+    { theme: "dark", background: null, source: "default", explicit: false },
+    ({ theme }) => updates.push(theme),
+  )
+  monitor.start()
+  try {
+    port.feedInput("\x1b[?997;2n")
+    port.feedInput("\x1b[?1;2c")
+    monitor.accept({ theme: "dark", background: "#0d1117", source: "osc11", explicit: false })
+
+    port.emitOsc("\x1b]11;rgb:ffff/ffff/ffff\x1b\\")
+    expect(port.feedInput("\x1b[?1;2c")).toBe(false)
+    expect(updates).toEqual([])
+
+    port.feedInput("\x1b[?997;2n")
+    expect(port.writes.at(-1)).toBe("\x1b[c")
+  } finally {
+    monitor.dispose()
+  }
+})
+
 test("embedded terminals receive the theme foreground and resolved background as a pair", () => {
   expect(
     buildEmbeddedThemeSequence({

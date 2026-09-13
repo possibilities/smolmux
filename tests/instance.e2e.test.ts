@@ -222,6 +222,13 @@ test.skipIf(!ENABLED)(
         () => JSON.stringify(output.slice(-400)),
       )
       await waitUntil(async () => (await client!.request("instance.status")).stage.cols === 100)
+      expect(output).not.toContain("smolmux-present")
+      const presentationReset = output.indexOf("\x1bc")
+      expect(presentationReset).toBeGreaterThanOrEqual(0)
+      const presentationRelease = output.indexOf("\x1b[?2026l", presentationReset)
+      expect(presentationRelease).toBeGreaterThan(presentationReset)
+      expect(output.slice(presentationReset, presentationRelease)).toContain("tray ready")
+      expect(output.slice(presentationReset, presentationRelease)).toContain("main ready")
 
       // A copy reaches the terminal the human sits at, wherever that is: the
       // Runtime writes OSC 52 and the Client relays it like any other byte.

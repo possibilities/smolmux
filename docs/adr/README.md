@@ -42,6 +42,7 @@ no status claim beyond the record; it does not certify every detail as current.
 | [0029: Agent state is a glyph and a weight, never a hue](0029-state-by-glyph-not-hue.md) | Superseded for agent/tray state | [ADR 0016](0016-sessions-are-arbitrary-commands.md) removes the Agent list and its state glyphs. The original Fx-specific design tradeoff below is historical; current terminal/theme behavior belongs to repository guidance. |
 | [0030: Pane Focus policy](0030-pane-focus-policy.md) | Recorded | — |
 | [0031: One observable stop operation](0031-one-observable-stop-operation.md) | Recorded | — |
+| [0032: One current frame opens a Client](0032-one-current-frame-opens-a-client.md) | Accepted | — |
 
 ## Identifier history
 

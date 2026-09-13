@@ -188,6 +188,16 @@ export class FxnkThemeMonitor {
     this.port.removeInputHandler(this.inputHandler)
   }
 
+  /** Accept a complete sample supplied by a newly attached physical Client. */
+  accept(resolution: FxnkThemeResolution): void {
+    this.phase = "idle"
+    this.notification = null
+    this.sample = null
+    this.sampleDirty = false
+    this.clearTimer()
+    this.current = resolution
+  }
+
   private beginDrain(): void {
     this.phase = "drain"
     this.sample = null

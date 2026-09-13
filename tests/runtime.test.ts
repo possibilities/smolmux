@@ -12,7 +12,10 @@ import { PtyTransportFactory } from "./fixtures/pty-transport.ts"
 const FAKE_APP = fileURLToPath(new URL("./fixtures/fake-app.ts", import.meta.url))
 const INSTANCE = "0123456789ab"
 
-async function harness(prepare?: (companion: FakeCompanion, transport: PtyTransportFactory) => void) {
+async function harness(
+  prepare?: (companion: FakeCompanion, transport: PtyTransportFactory) => void,
+  beforePresentationFrame?: (token: string | null, theme: "dark" | "light") => void,
+) {
   const setup = await createTestRenderer({ width: 100, height: 30, kittyKeyboard: true, exitOnCtrlC: false })
   const companion = new FakeCompanion()
   const transport = new PtyTransportFactory()
@@ -23,6 +26,7 @@ async function harness(prepare?: (companion: FakeCompanion, transport: PtyTransp
     instanceName: "default",
     socketPath: `/tmp/smolmux-test/${INSTANCE}.api`,
     theme: { theme: "dark", background: null, source: "default", explicit: false },
+    beforePresentationFrame,
     sessions: {
       instanceId: INSTANCE,
       companion: companion.asCompanion(),
@@ -70,6 +74,28 @@ test("a fresh Instance draws its empty state and reports itself", async () => {
   } finally {
     await app.close()
   }
+})
+
+test("client.present applies size, Layout, and sampled theme before one tokenized full frame", async () => {
+  const transitions: { token: string | null; theme: "dark" | "light" }[] = []
+  const app = await harness(undefined, (token, theme) => transitions.push({ token, theme }))
+  const token = "12345678-1234-4123-8123-123456789abc"
+  try {
+    const presenting = app.call("client.present", { token, cols: 120, rows: 36, theme: "light", background: "#fafafa" })
+    await app.setup.renderOnce()
+    await presenting
+    const status = await app.call<InstanceStatus>("instance.status")
+    expect(status.stage).toEqual({ cols: 120, rows: 36 })
+    expect(status.layout.stage).toEqual({ cols: 120, rows: 36 })
+    expect(status.theme).toBe("light")
+    expect(transitions).toEqual([{ token, theme: "light" }])
+
+    // A same-size, same-theme reattach still gets its own full-frame marker.
+    const again = app.call("client.present", { token, cols: 120, rows: 36, theme: "light", background: "#fafafa" })
+    await app.setup.renderOnce()
+    await again
+    expect(transitions).toHaveLength(2)
+  } finally { await app.close() }
 })
 
 test("an Instance that adopted Sessions shows the first one instead of the empty state", async () => {
@@ -586,6 +612,10 @@ test("stop that cannot end a Session says so and stays up", async () => {
     expect(app.setup.captureCharFrame()).toContain("stop incomplete: tray; retry to finish")
     await expect(app.call("app.create", { pty: "companion", name: "third", argv: [FAKE_APP], cwd: process.cwd() }))
       .rejects.toMatchObject({ code: "conflict" })
+    await expect(app.call("client.present", {
+      token: "12345678-1234-4123-8123-123456789abc",
+      cols: 120, rows: 36, theme: "dark", background: "#0d1117",
+    })).rejects.toMatchObject({ code: "conflict" })
 
     // Retrying against the same Instance finishes once the Companion lets go.
     app.companion.killRefuses.clear()

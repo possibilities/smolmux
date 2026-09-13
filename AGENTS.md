@@ -137,11 +137,11 @@
 
 - Theme: a headless Runtime asks nothing (`resolveFxnkTheme` with a zero
   timeout takes `SMOLMUX_THEME`, then `COLORFGBG`, then dark), and the first
-  Client samples its own terminal before relaying anything, then sends the
-  same CSI 997 notification a terminal would. The existing live-theme path
-  does the rest: drain stale replies behind a DA1 fence, sample OSC 11 behind
-  a second fence, discard a sample superseded by a newer notification, then
-  replace the complete fixed token set in one render turn.
+  Client samples its own terminal before relaying anything. `client.present`
+  applies that exact background with the Client size in one render turn. Later
+  CSI 997 notifications use the live-theme path: drain stale replies behind a
+  DA1 fence, sample OSC 11 behind a second fence, discard a sample superseded
+  by a newer notification, then replace the complete fixed token set.
 - Every color smolmux paints comes from `fxnkRamp` (`src/host-palette.ts`):
   fixed indexed roles `255/252/250/245/240` in dark and `235/238/241/247/250`
   in light, plus the surface/unused carve-outs `236/235` and `254/255`. Focus
@@ -158,6 +158,15 @@
   in the same write, and emits nothing at all for an empty cold-Runtime
   Restore so the shell surface stays intact. Every failure path must end
   synchronized output and reveal the cursor.
+- An attaching Client holds Restore and intermediate Runtime output through
+  the first complete frame after its private presentation token. The Runtime
+  writes that token before a synchronized clear, applies size, theme and Layout
+  synchronously, forces a complete frame, and resolves `client.present` only
+  after that frame. The Client releases reset, sanitized Restore, and that
+  frame in one write. All Clients consume every token; only its owner releases
+  held output. Input and API traffic stay live while pixels are held. Same-size
+  and same-theme attaches still repaint. Keep the wait frame-bounded; renderer
+  idle can starve under continuous Apps.
 - `keys.detach` is intercepted by the thin Client and disconnects only that
   Client. There is deliberately no Detach method: a program does not own a
   physical terminal connection. Detaching never ends a Session or the

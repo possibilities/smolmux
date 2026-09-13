@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events"
 import { CompanionConnection } from "../src/companion-client.ts"
 import type { Exit } from "../src/zmx-protocol.ts"
 import { ClientInputFilter, ClientOutputRelay, runTerminalClient } from "../src/terminal-client.ts"
+import { presentationMarker } from "../src/presentation.ts"
 
 test("an empty Runtime Restore leaves the shell surface intact", () => {
   const writes: Uint8Array[] = []
@@ -30,6 +31,39 @@ test("a populated Restore resets and conceals in the same write as its first byt
     "\x1bc\x1b[?25lRESTORED",
     " LIVE",
   ])
+})
+
+test("a token-gated Client hides Restore until its exact fresh presentation marker", () => {
+  const writes: Uint8Array[] = []
+  const relay = new ClientOutputRelay((bytes) => writes.push(bytes))
+  const token = "12345678-1234-4123-8123-123456789abc"
+  const other = "87654321-4321-4321-8321-cba987654321"
+  relay.awaitPresentation(token)
+  relay.beginRestore()
+  relay.output(Buffer.from("\x1b[?2026hSTALE 80x24\x1bc\x1b[?2026l"))
+  relay.ready()
+  relay.output(Buffer.from(`${presentationMarker(other)}INTERMEDIATE`))
+  expect(writes).toEqual([])
+
+  const marked = Buffer.from(`${presentationMarker(token)}\x1b[?2026hFRESH 120x36`)
+  for (let index = 0; index < marked.byteLength; index += 1) relay.output(marked.subarray(index, index + 1))
+  expect(writes).toEqual([])
+  const frameEnd = Buffer.from("\x1b[?2026l")
+  for (let index = 0; index < frameEnd.byteLength; index += 1) relay.output(frameEnd.subarray(index, index + 1))
+  const output = Buffer.concat(writes).toString()
+  expect(writes).toHaveLength(1)
+  expect(output).toStartWith("\x1bc\x1b[?25l\x1b[?2026hSTALE 80x24INTERMEDIATE")
+  expect(output).toEndWith("\x1b[?2026hFRESH 120x36\x1b[?2026l")
+  expect(output.slice(0, output.indexOf("FRESH"))).not.toContain("\x1b[?2026l")
+  expect(output.match(/\x1bc/gu)).toHaveLength(1)
+  expect(output).not.toContain("smolmux-present")
+})
+
+test("an established Client consumes presentation markers and keeps surrounding output", () => {
+  const writes: Uint8Array[] = []
+  const relay = new ClientOutputRelay((bytes) => writes.push(bytes))
+  relay.output(Buffer.from(`before${presentationMarker("12345678-1234-4123-8123-123456789abc")}after`))
+  expect(Buffer.concat(writes).toString()).toBe("beforeafter")
 })
 
 test("prefix Detach is consumed locally and never arms the shared Runtime", () => {

@@ -391,6 +391,19 @@ export const METHODS = {
     params: z.object({ text: z.string().min(1).max(MAX_INPUT_PASTE) }).strict(),
     result: z.object({ written: z.boolean() }).strict(),
   },
+  "client.present": {
+    description: "Replace attach Restore with one current full frame at this bounded terminal size and sampled background. The token selects only the requesting Client's presentation gate, which opens when that frame completes.",
+    params: z.object({
+      token: z.string().uuid().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u),
+      cols: z.int().min(1).max(4096),
+      rows: z.int().min(1).max(4096),
+      theme: theme.nullable(),
+      background: z.string().regex(/^#[0-9a-f]{6}$/u).nullable(),
+    }).strict()
+      .refine((value) => value.cols * value.rows <= 262144, "presentation size may contain at most 262144 cells")
+      .refine((value) => value.background === null || value.theme !== null, "a sampled background requires a theme"),
+    result: empty,
+  },
 } as const
 
 export type Method = keyof typeof METHODS

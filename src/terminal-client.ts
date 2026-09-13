@@ -1,12 +1,19 @@
 import { StdinParser, type StdinEvent, type KeyEvent } from "@opentui/core"
+import { randomUUID } from "node:crypto"
 import { CompanionConnection, type CloseReason } from "./companion-client.ts"
 import { colorFgBgIsLight, type FxnkTheme, parseOsc11Response, themeModeReport } from "./host-palette.ts"
 import { keyMatchesCombo, type Keybindings } from "./keybindings.ts"
+import { PRESENTATION_MARKER_LENGTH, PRESENTATION_MARKER_PREFIX, readPresentationMarker } from "./presentation.ts"
+import type { Params } from "./protocol.ts"
 import { Tag, type Resize } from "./zmx-protocol.ts"
 
 const CURSOR_CONCEAL = "\x1b[?25l"
 const CURSOR_REVEAL = "\x1b[?25h"
 const RESTORE_RESET = Buffer.from(`\x1bc${CURSOR_CONCEAL}`)
+const SYNCHRONIZED_BEGIN = Buffer.from("\x1b[?2026h")
+const SYNCHRONIZED_END = Buffer.from("\x1b[?2026l")
+const PRESENTATION_BOUNDARY = /\x1bc|\x1b\[\?2026[hl]/gu
+const MAX_HELD_PRESENTATION_BYTES = 32 * 1024 * 1024
 const BRACKETED_PASTE_START = new TextEncoder().encode("\x1b[200~")
 const BRACKETED_PASTE_END = new TextEncoder().encode("\x1b[201~")
 const TERMINAL_CLEANUP = [
@@ -25,6 +32,8 @@ const MODIFIER_ONLY_KEYS = new Set(["shift", "control", "ctrl", "alt", "meta", "
 /** How long this terminal is given to answer the one OSC 11 background query. */
 export const THEME_SAMPLE_TIMEOUT_MS = 200
 
+type SampledTheme = { theme: FxnkTheme; background: string | null }
+
 export type TerminalClientOptions = {
   socketPath: string
   keybindings: Keybindings
@@ -32,6 +41,8 @@ export type TerminalClientOptions = {
   stdout?: NodeJS.WriteStream
   /** Release temporary startup signal ownership once this Client owns it. */
   onSignalHandlersInstalled?: () => void
+  /** Replace the stale attach Restore with a Runtime-rendered current frame. */
+  present?: (request: Params<"client.present">) => Promise<void>
 }
 
 type ClientOutcome = { exitCode: number; error?: Error }
@@ -43,6 +54,13 @@ type ClientOutcome = { exitCode: number; error?: Error }
  */
 export class ClientOutputRelay {
   private restorePending = false
+  private presentationToken: string | null = null
+  private held: Buffer[] = []
+  private fresh: Buffer[] = []
+  private heldBytes = 0
+  private freshTail = Buffer.alloc(0)
+  private markerMatched = false
+  private scanning = Buffer.alloc(0)
 
   constructor(private readonly write: (bytes: Uint8Array) => void) {}
 
@@ -50,22 +68,97 @@ export class ClientOutputRelay {
     this.restorePending = true
   }
 
+  awaitPresentation(token: string): void {
+    this.presentationToken = token
+  }
+
   output(bytes: Uint8Array): void {
     if (bytes.byteLength === 0) return
-    if (!this.restorePending) {
-      this.write(bytes)
-      return
+    this.scanning = Buffer.concat([this.scanning, Buffer.from(bytes)])
+    for (;;) {
+      const marker = this.scanning.indexOf(PRESENTATION_MARKER_PREFIX)
+      if (marker === -1) {
+        const keep = markerPrefixSuffix(this.scanning)
+        this.deliver(this.scanning.subarray(0, this.scanning.byteLength - keep))
+        this.scanning = this.scanning.subarray(this.scanning.byteLength - keep)
+        return
+      }
+      this.deliver(this.scanning.subarray(0, marker))
+      this.scanning = this.scanning.subarray(marker)
+      if (this.scanning.byteLength < PRESENTATION_MARKER_LENGTH) return
+      const token = readPresentationMarker(this.scanning.subarray(0, PRESENTATION_MARKER_LENGTH))
+      if (!token) {
+        this.deliver(this.scanning.subarray(0, 1))
+        this.scanning = this.scanning.subarray(1)
+        continue
+      }
+      this.scanning = this.scanning.subarray(PRESENTATION_MARKER_LENGTH)
+      if (token === this.presentationToken) this.markerMatched = true
     }
-    this.restorePending = false
-    this.write(Buffer.concat([RESTORE_RESET, bytes]))
   }
 
   ready(): void {
     // No Restore output means this is a fresh, blank Runtime. Its alternate
     // screen is the reset, so clearing the physical Client here would only
     // expose an empty screen before the first frame exists.
-    this.restorePending = false
+    if (!this.presentationToken) this.restorePending = false
   }
+
+  private deliver(bytes: Uint8Array): void {
+    if (bytes.byteLength === 0) return
+    if (this.presentationToken) {
+      if (this.heldBytes + bytes.byteLength > MAX_HELD_PRESENTATION_BYTES) {
+        throw new Error("terminal presentation exceeded 32 MiB before its first complete frame")
+      }
+      const copy = Buffer.from(bytes)
+      this.heldBytes += copy.byteLength
+      if (!this.markerMatched) {
+        this.held.push(copy)
+        return
+      }
+      const scanned = Buffer.concat([this.freshTail, copy])
+      const frameEnd = scanned.indexOf(SYNCHRONIZED_END)
+      if (frameEnd === -1) {
+        this.fresh.push(copy)
+        this.freshTail = scanned.subarray(Math.max(0, scanned.byteLength - SYNCHRONIZED_END.byteLength + 1))
+        return
+      }
+      const throughEnd = frameEnd + SYNCHRONIZED_END.byteLength - this.freshTail.byteLength
+      this.fresh.push(copy.subarray(0, throughEnd))
+      const remainder = copy.subarray(throughEnd)
+      this.openPresentation()
+      this.deliver(remainder)
+      return
+    }
+    if (this.restorePending) {
+      this.restorePending = false
+      this.write(Buffer.concat([RESTORE_RESET, bytes]))
+    } else this.write(bytes)
+  }
+
+  private openPresentation(): void {
+    this.presentationToken = null
+    this.markerMatched = false
+    this.restorePending = false
+    const held = Buffer.concat(this.held).toString("latin1").replaceAll(PRESENTATION_BOUNDARY, "")
+    const fresh = this.fresh
+    this.held = []
+    this.fresh = []
+    this.heldBytes = 0
+    this.freshTail = Buffer.alloc(0)
+    // RIS and old synchronized-frame boundaries cannot escape early because
+    // nothing is written until the first post-marker frame has ended. Release
+    // the sanitized Restore and complete fresh frame in one physical write.
+    this.write(Buffer.concat([RESTORE_RESET, SYNCHRONIZED_BEGIN, Buffer.from(held, "latin1"), ...fresh]))
+  }
+}
+
+function markerPrefixSuffix(bytes: Buffer): number {
+  const maximum = Math.min(bytes.byteLength, PRESENTATION_MARKER_PREFIX.byteLength - 1)
+  for (let length = maximum; length > 0; length -= 1) {
+    if (bytes.subarray(bytes.byteLength - length).equals(PRESENTATION_MARKER_PREFIX.subarray(0, length))) return length
+  }
+  return 0
 }
 
 /** Conceal as soon as a terminal invocation commits to opening the TUI. */
@@ -137,24 +230,38 @@ export async function runTerminalClient(options: TerminalClientOptions): Promise
     finish({ exitCode: 1, error: closeError(reason) })
   })
 
-  let theme: FxnkTheme | null = null
+  let theme: SampledTheme | null = null
   const ready = Promise.withResolvers<void>()
   let readyHandled = false
   connection.onReady(() => {
-    outputRelay.ready()
     if (readyHandled) return
     readyHandled = true
-    // The Runtime is headless until a terminal arrives, so it cannot ask this
-    // terminal what its background is. Tell it the way a terminal would: the
-    // notification its live-theme path already listens for, after which the
-    // Runtime samples OSC 11 through this Client itself.
-    if (theme && !connection.isClosed) guard(() => connection.write(themeModeReport(theme!)))
-    ready.resolve()
+    // The Runtime is headless until a terminal arrives, so this Client owns
+    // the first exact background sample. A presentation-capable caller sends
+    // size and palette together; an older caller retains the theme trigger.
+    outputRelay.ready()
+    if (options.present) {
+      void options.present({
+        token: presentationToken!, ...presentationSize!,
+        theme: theme?.theme ?? null, background: theme?.background ?? null,
+      }).then(() => ready.resolve(), (error) => finish({ exitCode: 1, error: error instanceof Error ? error : new Error(String(error)) }))
+    } else {
+      const sampled = theme
+      if (sampled && !connection.isClosed) guard(() => connection.write(themeModeReport(sampled.theme)))
+      ready.resolve()
+    }
   })
 
+  let presentationToken: string | null = null
+  let presentationSize: Resize | null = null
   try {
     stdin.setRawMode?.(true)
     theme = await sampleTerminalTheme(stdin, stdout)
+    presentationSize = terminalSize(stdout)
+    if (options.present) {
+      presentationToken = randomUUID()
+      outputRelay.awaitPresentation(presentationToken)
+    }
     inputFilter = new ClientInputFilter(
       options.keybindings,
       (bytes) => {
@@ -180,7 +287,7 @@ export async function runTerminalClient(options: TerminalClientOptions): Promise
     }
     options.onSignalHandlersInstalled?.()
 
-    connection.attach(terminalSize(stdout))
+    connection.attach(presentationSize)
     await Promise.race([ready.promise, completion.promise])
 
     const outcome = await completion.promise
@@ -336,15 +443,15 @@ async function sampleTerminalTheme(
   stdout: NodeJS.WriteStream,
   env: NodeJS.ProcessEnv = process.env,
   timeoutMs = THEME_SAMPLE_TIMEOUT_MS,
-): Promise<FxnkTheme | null> {
+): Promise<SampledTheme | null> {
   const override = env.SMOLMUX_THEME?.toLowerCase()
-  if (override === "light" || override === "dark") return override
+  if (override === "light" || override === "dark") return { theme: override, background: null }
   if (!stdin.isTTY || !stdout.isTTY) return null
 
-  const { promise, resolve } = Promise.withResolvers<FxnkTheme | null>()
+  const { promise, resolve } = Promise.withResolvers<SampledTheme | null>()
   let buffer = ""
   let settled = false
-  const finish = (theme: FxnkTheme | null): void => {
+  const finish = (theme: SampledTheme | null): void => {
     if (settled) return
     settled = true
     clearTimeout(timer)
@@ -356,9 +463,9 @@ async function sampleTerminalTheme(
     const start = buffer.lastIndexOf("\x1b]11;")
     if (start === -1) return
     const parsed = parseOsc11Response(buffer.slice(start))
-    if (parsed) finish(parsed.light ? "light" : "dark")
+    if (parsed) finish({ theme: parsed.light ? "light" : "dark", background: parsed.hex })
   }
-  const timer = setTimeout(() => finish(colorFgBgIsLight(env.COLORFGBG) ? "light" : null), Math.max(0, timeoutMs))
+  const timer = setTimeout(() => finish(colorFgBgIsLight(env.COLORFGBG) ? { theme: "light", background: null } : null), Math.max(0, timeoutMs))
   stdin.on("data", onData)
   stdin.resume()
   try {

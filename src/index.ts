@@ -156,6 +156,11 @@ async function attachClient(instance: Instance, startIfNeeded: boolean): Promise
     process.exitCode = await runTerminalClient({
       socketPath: terminalSocket,
       keybindings: loadedConfig.keybindings,
+      present: async (request) => {
+        const presentation = await ApiClient.connect(apiSocketPathFor(instance.id))
+        try { await presentation.request("client.present", request) }
+        finally { presentation.close() }
+      },
       onSignalHandlersInstalled: releaseStartupSignals,
     })
   } finally {

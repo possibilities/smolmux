@@ -26,6 +26,7 @@ describe("the contract", () => {
       "app.remove",
       "app.restart",
       "client.copy",
+      "client.present",
       "event.subscribe",
       "instance.configure",
       "instance.prepare.complete",
@@ -36,6 +37,14 @@ describe("the contract", () => {
       "layout.get",
       "state.get",
     ])
+  })
+
+  test("bounds a Client presentation token, size, and sampled background", () => {
+    const valid = { token: "12345678-1234-4123-8123-123456789abc", cols: 120, rows: 36, theme: "dark", background: "#0d1117" }
+    expect(METHODS["client.present"].params.safeParse(valid).success).toBe(true)
+    expect(METHODS["client.present"].params.safeParse({ ...valid, token: crypto.randomUUID().toUpperCase() }).success).toBe(false)
+    expect(METHODS["client.present"].params.safeParse({ ...valid, cols: 4096, rows: 4096 }).success).toBe(false)
+    expect(METHODS["client.present"].params.safeParse({ ...valid, theme: null }).success).toBe(false)
   })
 
   test("takes input as intent, never as bytes, and still manages nothing a Pane runs", () => {

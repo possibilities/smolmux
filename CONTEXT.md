@@ -145,6 +145,13 @@ and a `Ready` after which bytes are live. A reconnect replays onto a clean
 screen for the same reason a first attach does.
 _Avoid_: replay, resync, history.
 
+**Presentation** — the first frame a newly attached Client makes visible. The
+Client holds its Restore while the Runtime applies that terminal's size and
+sampled background, then a private token selects the next complete frame. The
+Client releases that current frame in one write. Other Clients consume the
+token without changing what they show.
+_Avoid_: splash, loading screen, startup delay.
+
 **Ramp** — the complete fixed indexed set every smolmux-owned surface uses after
 selecting a dark or light theme: foreground, accent, secondary, dim, divider,
 surface, and unused field. The canvas stays the terminal default. Dark is

@@ -35,6 +35,10 @@ export type RuntimeOptions = {
   host?: "headless" | "foreground"
   /** The terminal host brackets native restoration as one synchronized update. */
   beforeTerminalRestore?: () => void
+  /** Mark and clear a physical Client transition before one complete frame. */
+  beforePresentationFrame?: (token: string | null, theme: FxnkThemeResolution["theme"]) => void
+  /** Keep host-side terminal sampling state aligned with an API presentation. */
+  onThemeChanged?: (theme: FxnkThemeResolution) => void
   adopt?: boolean
   sessions: Omit<AppsOptions, "renderer" | "theme" | "onExit" | "onChanged" | "onState" | "onRoster">
   publish: (event: EventName, data: unknown) => void
@@ -186,6 +190,7 @@ export class Runtime {
     this.exitConfirmation.setTheme(resolution)
     if (this.stopState) this.stoppingView?.update(this.stopState, resolution)
     this.apps.setTheme(resolution)
+    this.options.onThemeChanged?.(resolution)
     this.renderer.requestRender()
     this.publish("theme.changed", { theme: resolution.theme })
   }
@@ -315,6 +320,10 @@ export class Runtime {
         // into the Runtime's output and every attached Client relays it.
         const request = params as Params<"client.copy">
         return { written: this.renderer.copyToClipboardOSC52(request.text) }
+      }
+      case "client.present": {
+        await this.present(params as Params<"client.present">)
+        return {}
       }
     }
   }
@@ -476,11 +485,46 @@ export class Runtime {
   private onResize(): void {
     if (this.shuttingDown || this.stopState) return
     const size = this.stage.size
+    if (size.cols === this.lastStage.cols && size.rows === this.lastStage.rows) return
     this.stage.refit("resize")
-    if (size.cols !== this.lastStage.cols || size.rows !== this.lastStage.rows) {
-      this.lastStage = size
-      this.publish("stage.changed", size)
+    this.lastStage = size
+    this.publish("stage.changed", size)
+  }
+
+  /** One physical resize, fitted and painted in the same synchronized transition. */
+  resize(cols: number, rows: number): void {
+    if (this.shuttingDown || this.stopState) return
+    this.options.beforePresentationFrame?.(null, this.theme.theme)
+    this.renderer.resize(cols, rows)
+    this.onResize()
+    this.repaint()
+  }
+
+  private async present(request: Params<"client.present">): Promise<void> {
+    const theme = this.theme.explicit ? this.theme.theme : request.theme ?? this.theme.theme
+    const frame = this.nextFrame()
+    this.options.beforePresentationFrame?.(request.token, theme)
+    this.renderer.resize(request.cols, request.rows)
+    if (!this.theme.explicit && request.theme) {
+      this.setTheme({
+        theme: request.theme,
+        background: request.background,
+        source: request.background ? "osc11" : "default",
+        explicit: false,
+      })
     }
+    this.onResize()
+    this.repaint()
+    await frame
+  }
+
+  private nextFrame(timeoutMs = 1_000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const done = () => { clearTimeout(timer); this.renderer.off(CliRenderEvents.FRAME, onFrame) }
+      const onFrame = () => { done(); resolve() }
+      const timer = setTimeout(() => { done(); reject(new ApiFailure("internal_error", "presentation frame did not render within 1000 ms")) }, timeoutMs)
+      this.renderer.on(CliRenderEvents.FRAME, onFrame)
+    })
   }
 
   private onSelection(selection: Selection): void {

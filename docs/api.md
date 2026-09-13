@@ -373,6 +373,33 @@ Writes OSC 52 to the foreground terminal or all attached Clients; terminal
 policy decides whether the clipboard is updated. Nothing is retained for a
 future Client. There is no read method.
 
+### `client.present`
+
+Params:
+
+```ts
+{
+  token: string                 // lowercase UUIDv4
+  cols: number                  // integer 1–4096
+  rows: number                  // integer 1–4096
+  theme: "dark" | "light" | null
+  background: "#rrggbb" | null
+}
+```
+
+Returns `{}` after the Runtime has synchronously applied the bounded terminal
+size, sampled palette and Layout, then committed one complete current frame.
+`cols * rows` is at most 262144. A non-null background requires a theme.
+
+The terminal Client uses the random token to keep its Companion Restore and
+intermediate output hidden through this frame's synchronized end. It releases
+reset, sanitized Restore and the complete current frame in one write.
+Presentation markers are private terminal control records: every Client
+consumes them, and only the matching Client selects the frame it will release.
+Input and other API requests remain live while presentation is held. A
+same-size or same-theme reattach still produces a full frame. A sealed stopping
+Instance refuses the method.
+
 ### `event.subscribe`
 
 Params `{events?:string[]}`, default `["*"]`; omitted/null params mean `{}`.

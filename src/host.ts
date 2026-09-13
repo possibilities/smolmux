@@ -13,6 +13,7 @@ import { HOST_KEYBOARD_PROTOCOL } from "./pane-terminal.ts"
 import { ensurePrivateDirectories } from "./private-directory.ts"
 import { ApiFailure, eventFrame, type StopState } from "./protocol.ts"
 import { Runtime } from "./runtime.ts"
+import { presentationMarker } from "./presentation.ts"
 import { concealClientCursor, revealClientCursor } from "./terminal-client.ts"
 import { beginSynchronizedFrame, beginSynchronizedResizeClear, endSynchronizedFrame } from "./unused-space.ts"
 import { CompanionCommand } from "./zmx-command.ts"
@@ -132,6 +133,10 @@ async function startHost(instance: Instance, foreground: boolean, environment: N
     let theme = await resolveFxnkTheme(port, environment, 0)
     runtime = new Runtime(drawn, {
       beforeTerminalRestore: () => process.stdout.write(beginSynchronizedFrame()),
+      beforePresentationFrame: (token, nextTheme) => process.stdout.write(
+        `${token ? presentationMarker(token) : ""}${beginSynchronizedResizeClear(nextTheme)}`,
+      ),
+      onThemeChanged: (next) => { theme = next; monitor?.accept(next) },
       instanceId: instance.id, instanceName: instance.name, socketPath, host: foreground ? "foreground" : "headless", adopt, theme,
       sessions: { instanceId: instance.id, resolveCompanion: getCompanion, local, environment, report },
       publish: (event, data) => server.broadcast(eventFrame(event, data as never)), report,
@@ -159,8 +164,7 @@ async function startHost(instance: Instance, foreground: boolean, environment: N
     }
     resize = () => {
       if (app.stopped) return
-      drawn.resize(Math.max(1, process.stdout.columns || drawn.width), Math.max(1, process.stdout.rows || drawn.height))
-      process.stdout.write(beginSynchronizedResizeClear(theme.theme)); app.repaint()
+      app.resize(Math.max(1, process.stdout.columns || drawn.width), Math.max(1, process.stdout.rows || drawn.height))
     }
     process.stdout.on("resize", resize)
     drawn.start()
