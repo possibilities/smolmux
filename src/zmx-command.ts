@@ -111,7 +111,7 @@ export const spawnCompanion =
   (binary: string, timeoutMs = COMPANION_COMMAND_TIMEOUT_MS): Spawner =>
   async (args, options) => {
     const proc = Bun.spawn([binary, ...args], {
-      cwd: options.cwd,
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
       env: options.env,
       stdin: "ignore",
       stdout: "pipe",
