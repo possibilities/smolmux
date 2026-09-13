@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url"
 import { ApiClient } from "../src/api-client.ts"
 import { apiSocketPathFor } from "../src/api-server.ts"
 import { resolveInstance } from "../src/instance.ts"
-import type { EventFrame, LayoutView, AppView } from "../src/protocol.ts"
+import type { EventFrame, LayoutView, AppView, InstanceStatus } from "../src/protocol.ts"
+import { runtimeSessionName } from "../src/session-identity.ts"
 import { CompanionCommand } from "../src/zmx-command.ts"
 import { COMPANION_BINARY_NAME } from "../src/zmx-environment.ts"
 
@@ -73,6 +74,37 @@ async function endCompanionSessions(env: Record<string, string>): Promise<void> 
     if (session.state === "exited") await companion.forget(session.name).catch(() => {})
   }
 }
+
+test.skipIf(!ENABLED)(
+  "CLI stop returns only after the exact headless Runtime Companion session has ended",
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "smolmux-e2e-stop-barrier-"))
+    const env = environment(directory, "default")
+    const socketPath = socketFor(env)
+    let client: ApiClient | null = null
+    try {
+      expect((await smolmux(["start"], env)).stdout.trim()).toBe(socketPath)
+      client = await ApiClient.connect(socketPath)
+      const status = await client.request("instance.status") as InstanceStatus
+      client.close()
+      client = null
+
+      const stopped = await smolmux(["stop"], env)
+      expect(stopped).toMatchObject({ code: 0, stdout: "", stderr: "" })
+
+      const companion = new CompanionCommand(env.SMOLMUX_ZMX_DIR!, env, COMPANION!)
+      const runtime = await companion.inspect(runtimeSessionName(status.instance_id))
+      expect(runtime.state === "exited" || runtime.state === "absent").toBe(true)
+      expect(runtime.state).not.toBe("live")
+      expect(processExists(status.pid)).toBe(false)
+    } finally {
+      client?.close()
+      await endCompanionSessions(env)
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+  30_000,
+)
 
 test.skipIf(!ENABLED)(
   "an Instance is started, driven, attached to, and stopped entirely over its socket",

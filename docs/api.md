@@ -127,8 +127,16 @@ Params `{}`. The first caller seals declarations synchronously, creates an
 observable attempt, runs bounded optional preparation, waits for queued App
 work, and terminates every local and Companion Session. Concurrent callers
 join that attempt. Success returns its complete `StopState`, including any
-`preparationError`, then shuts down after the response. Success confirms
-terminal cleanup even when preparation reported an error.
+`preparationError`, then shuts down after the response. Success confirms App
+terminal cleanup even when preparation reported an error. The Runtime host is
+still alive long enough to write that response.
+
+External lifecycle owners capture `instance.status` before stopping, then call
+`waitForRuntimeExit(status)` from `smolmux/lifecycle` after the response. It
+waits up to five seconds by default for that exact headless Companion Runtime
+record or foreground PID to end. It never sends a signal and rejects an
+environment, ownership, or live-PID mismatch. `smolmux stop` uses this barrier,
+so its successful process exit confirms both App cleanup and Runtime exit.
 
 If termination is unconfirmed, the call returns `companion_error`; status and
 `instance.stop.changed` retain phase `failed`, its error, and exact remaining

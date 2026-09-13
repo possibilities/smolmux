@@ -43,6 +43,7 @@
   "exports": {
     "./client": "./src/api-client.ts",
     "./protocol": "./src/protocol.ts",
-    "./foreground": "./src/host.ts"
+    "./foreground": "./src/host.ts",
+    "./lifecycle": "./src/lifecycle.ts"
   }
 }

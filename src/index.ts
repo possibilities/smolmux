@@ -13,7 +13,8 @@ import { loadConfig } from "./config.ts"
 import { discoverEventSocket } from "./event-discovery.ts"
 import { doctor } from "./doctor.ts"
 import { type Instance, resolveInstance } from "./instance.ts"
-import { contractDocument } from "./protocol.ts"
+import { waitForRuntimeExit } from "./lifecycle.ts"
+import { contractDocument, type InstanceStatus } from "./protocol.ts"
 import {
   currentRuntimeCommand,
   ensureRuntimeSession,
@@ -184,12 +185,15 @@ async function printStatus(instance: Instance): Promise<void> {
 
 async function stopInstance(instance: Instance): Promise<void> {
   const client = await connect(instance)
+  let status: InstanceStatus
   try {
+    status = await client.request("instance.status")
     const result = await client.request("instance.stop")
     if (result.preparationError) process.stderr.write(`smolmux: stop preparation: ${result.preparationError}\n`)
   } finally {
     client.close()
   }
+  await waitForRuntimeExit(status)
 }
 
 async function connect(instance: Instance): Promise<ApiClient> {

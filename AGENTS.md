@@ -191,6 +191,11 @@
   a failed attempt stays sealed, readable, and retryable. One API connection
   may own a bounded generic preparation acknowledgement; disconnect, timeout,
   or its reported error never blocks terminal cleanup.
+- The stop response verifies every App but necessarily precedes teardown of
+  the Runtime process that writes it. External owners capture status first and
+  use `waitForRuntimeExit` from `smolmux/lifecycle`; CLI stop does this too.
+  Keep that barrier observational and refuse a changed Instance, ownership, or
+  PID rather than signalling a process that may be a replacement.
 - Preserve the last committed frame as inert context while stopping and show
   the operation phase in one quiet row. API state remains the live truth.
   Without that an `app.create` already queued behind another one starts its

@@ -11,6 +11,15 @@ runs bounded optional preparation, terminates every local and Companion
 Session, verifies termination, and only then completes and closes the Runtime.
 Concurrent API, CLI, and confirmed physical requests join the same attempt.
 
+The API result verifies App Sessions, not the Runtime process that must remain
+alive to write that result. External lifecycle owners capture status first and
+use the public `smolmux/lifecycle` `waitForRuntimeExit` barrier afterward. It
+derives the exact Companion namespace for a headless host, validates ownership
+and PID, and waits for that record to exit; for a foreground host it waits for
+the captured PID. It is bounded and observational: it never signals. The CLI
+uses the same helper, so successful `smolmux stop` includes Runtime exit while
+raw API callers can distinguish the two completion boundaries.
+
 A failed termination stays sealed. The Runtime keeps its API and stopping
 surface available, reports exact remaining Apps, and accepts a later stop as a
 new attempt against those survivors. It never reopens process creation or

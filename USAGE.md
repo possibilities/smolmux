@@ -98,9 +98,30 @@ shows a retry hint and leaves the Instance sealed but readable.
 `instance.stop` (and CLI `smolmux stop`) has stronger semantics in both modes:
 the first caller seals App creation synchronously, and concurrent callers join
 one observable attempt. It ends **all** local and Companion Sessions before
-replying and shutting down. If termination cannot be confirmed, the API fails,
+replying and then shuts down its host. If termination cannot be confirmed, the API fails,
 reports remaining Apps through status and `instance.stop.changed`, refuses new
 mutations, and accepts another stop attempt.
+
+The API result cannot itself wait for the Runtime process to be reaped because
+that process must remain alive to write the result. `smolmux stop` captures the
+pre-stop status and waits for the exact Runtime afterward. A controller that
+owns the full lifecycle can use the same public barrier:
+
+```ts
+import { waitForRuntimeExit } from "smolmux/lifecycle"
+
+const status = await client.request("instance.status")
+await client.request("instance.stop")
+client.close()
+await waitForRuntimeExit(status)
+```
+
+For a headless host the helper resolves the same Instance and Companion
+namespace, validates ownership and PID, and waits for its record to be exited
+or absent. For a foreground host it waits for the captured PID to disappear;
+an embedding owner that has the child handle should also await `child.exited`.
+The default timeout is five seconds. The helper observes and refuses mismatch;
+it never signals a process.
 
 A controller with resources outside smolmux may register its API connection
 once through `instance.prepare.register`. On every stop it receives a
