@@ -194,7 +194,16 @@ export async function runTerminalClient(options: TerminalClientOptions): Promise
     for (const [signal, handler] of signalHandlers) process.off(signal, handler)
     try {
       inputFilter?.destroy()
-      if (!connection.isClosed) connection.detach()
+      if (!connection.isClosed) {
+        // Completion already chose the caller-visible outcome. The Companion
+        // may have delivered Runtime Exit while its socket was closing, so
+        // this courtesy Detach is best-effort and cannot rewrite that outcome.
+        try { connection.detach() }
+        catch {
+          try { connection.close() }
+          catch { /* Terminal restoration still owns this completed path. */ }
+        }
+      }
     } finally {
       try {
         stdin.pause()

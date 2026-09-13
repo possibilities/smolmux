@@ -93,7 +93,10 @@ function processExists(pid: number): boolean {
     process.kill(pid, 0)
     return true
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM"
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === "ESRCH") return false
+    if (code === "EPERM") return true
+    throw error
   }
 }
 

@@ -130,8 +130,8 @@ function joinBytes(parts: Uint8Array[]): Uint8Array {
 }
 
 
-test("transport failure during input, resize, or Detach always restores the terminal", async () => {
-  for (const failure of ["input", "resize", "detach"]) {
+test("transport failure during input or resize always restores the terminal", async () => {
+  for (const failure of ["input", "resize"]) {
     const stdin = Object.assign(new EventEmitter(), {
       isRaw: false, isTTY: false,
       setRawMode(raw: boolean) { this.isRaw = raw },
@@ -151,7 +151,7 @@ test("transport failure during input, resize, or Detach always restores the term
       attach() { ready() },
       write: failure === "input" ? broken : () => {},
       resize: failure === "resize" ? broken : () => {},
-      detach: failure === "detach" ? broken : () => {},
+      detach() {},
     }
     const connect = spyOn(CompanionConnection, "connect").mockResolvedValue(connection as unknown as CompanionConnection)
     const installed = Promise.withResolvers<void>()
@@ -168,8 +168,7 @@ test("transport failure during input, resize, or Detach always restores the term
       expect(stdin.isRaw).toBe(true)
       expect(() => {
         if (failure === "input") stdin.emit("data", Buffer.from("x"))
-        else if (failure === "resize") stdout.emit("resize")
-        else stdin.emit("end")
+        else stdout.emit("resize")
       }).not.toThrow()
       expect(await outcome).toBeInstanceOf(Error)
       expect(stdin.isRaw).toBe(false)
@@ -181,6 +180,41 @@ test("transport failure during input, resize, or Detach always restores the term
       connect.mockRestore()
     }
   }
+})
+
+test("a cleanup Detach race cannot overwrite a verified Runtime exit", async () => {
+  const stdin = Object.assign(new EventEmitter(), {
+    isRaw: false, isTTY: false, setRawMode(raw: boolean) { this.isRaw = raw }, resume() {}, pause() {},
+  })
+  const writes: string[] = []
+  const stdout = Object.assign(new EventEmitter(), {
+    isTTY: false, columns: 80, rows: 24,
+    write(bytes: string | Uint8Array) { writes.push(Buffer.from(bytes).toString()); return true },
+  })
+  let exit = (_status: Exit) => {}
+  let ready = () => {}
+  let closed = false
+  const connection = {
+    isClosed: false, onRestoreBegin() {}, onOutput() {}, onFrame() {}, onClose() {},
+    onExit(listener: (status: Exit) => void) { exit = listener }, onReady(listener: () => void) { ready = listener },
+    attach() { ready() }, write() {}, resize() {},
+    detach() { throw new Error("Companion socket write failed") },
+    close() { closed = true },
+  }
+  const connect = spyOn(CompanionConnection, "connect").mockResolvedValue(connection as unknown as CompanionConnection)
+  const installed = Promise.withResolvers<void>()
+  try {
+    const running = runTerminalClient({ socketPath: "unused", keybindings: resolveKeybindings().keybindings,
+      stdin: stdin as unknown as NodeJS.ReadStream, stdout: stdout as unknown as NodeJS.WriteStream,
+      onSignalHandlersInstalled: () => installed.resolve(),
+    })
+    await installed.promise
+    exit({ code: 0, signal: 0, reason: 0 })
+    expect(await running).toBe(0)
+    expect(closed).toBe(true)
+    expect(stdin.isRaw).toBe(false)
+    expect(writes.join("")).toContain("\x1b[?25h")
+  } finally { connect.mockRestore() }
 })
 
 test("unknown Runtime exit status reports a diagnostic and restores the terminal", async () => {

@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, expect, spyOn, test } from "bun:test"
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -38,6 +38,17 @@ test("a lifecycle barrier refuses status from another resolved Instance", async 
   const fixture = await fakeCompanion()
   const status = { name: "default", instance_id: "not-this-one", pid: 4242, host: "headless" } as InstanceStatus
   await expect(waitForRuntimeExit(status, { env: fixture.env })).rejects.toThrow("Runtime identity mismatch")
+})
+
+test("a foreground lifecycle probe rethrows errors that do not prove exit", async () => {
+  const fixture = await fakeCompanion()
+  const instance = resolveInstance("default", fixture.env)
+  const status = { name: instance.name, instance_id: instance.id, pid: 4242, host: "foreground" } as InstanceStatus
+  const failure = Object.assign(new Error("probe failed"), { code: "EIO" })
+  const kill = spyOn(process, "kill").mockImplementation(() => { throw failure })
+  try {
+    await expect(waitForRuntimeExit(status, { env: fixture.env })).rejects.toBe(failure)
+  } finally { kill.mockRestore() }
 })
 
 async function fakeCompanion(): Promise<{ env: NodeJS.ProcessEnv; count: string }> {
