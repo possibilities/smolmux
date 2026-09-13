@@ -86,6 +86,15 @@ PTY for attached Clients, or directly in its foreground terminal; closing a
 foreground Runtime ends local Sessions and releases Companion Sessions.
 _Avoid_: server, daemon, backend.
 
+**Stop operation** — one observable, completion-based attempt to end an
+Instance. Acceptance seals App declarations synchronously. Concurrent callers
+join it; a failed termination remains sealed, readable, and retryable against
+the reported survivors. One API connection may own a bounded optional generic
+preparation acknowledgement, whose timeout, error, or disconnect is reported
+without preventing terminal cleanup. Its stopping surface preserves an inert
+copy of the last committed frame while the API continues to report live state.
+_Avoid_: detach, shutdown request, graceful hint.
+
 **Client** — one thin interactive `smolmux attach` and its physical terminal. It
 relays terminal bytes and size, samples its own background so the Runtime can
 follow it, and alone owns Detach. Several may watch and interact with the

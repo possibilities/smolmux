@@ -671,11 +671,6 @@ export class Sessions {
     this.shuttingDown = true
   }
 
-  /** Take the seal off: a stop that could not finish leaves the Instance usable. */
-  unseal(): void {
-    this.shuttingDown = false
-  }
-
   /** Let go of every process without ending it: the Companion keeps them. */
   shutdown(): void {
     this.shuttingDown = true

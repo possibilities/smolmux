@@ -28,6 +28,8 @@ describe("the contract", () => {
       "client.copy",
       "event.subscribe",
       "instance.configure",
+      "instance.prepare.complete",
+      "instance.prepare.register",
       "instance.status",
       "instance.stop",
       "layout.apply",
@@ -48,7 +50,7 @@ describe("the contract", () => {
     expect(Object.keys(EVENTS).sort()).toEqual([
       "app.state",
       "apps.changed",
-      "instance.stopping",
+      "instance.stop.changed",
       "layout.changed",
       "session.changed",
       "session.exited",

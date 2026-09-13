@@ -378,6 +378,57 @@ test.skipIf(!ENABLED)(
   60_000,
 )
 
+test.skipIf(!ENABLED)(
+  "a foreground Instance ends a local process through concurrent stop callers within host grace",
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "smolmux-e2e-foreground-"))
+    const env = environment(directory, "default")
+    const socketPath = socketFor(env)
+    let foreground: ReturnType<typeof Bun.spawn> | null = null
+    let first: ApiClient | null = null
+    let second: ApiClient | null = null
+    let localPid: number | null = null
+    try {
+      foreground = Bun.spawn([...SMOLMUX_COMMAND, "start", "--foreground"], {
+        cwd: ROOT,
+        env,
+        terminal: { cols: 100, rows: 30, data: () => {} },
+      })
+      await waitUntil(() => answers(socketPath), 10_000)
+      first = await ApiClient.connect(socketPath)
+      second = await ApiClient.connect(socketPath)
+      expect(await first.request("instance.status")).toMatchObject({ host: "foreground", capabilities: { local: true } })
+      const local = await first.request("app.create", {
+        pty: "local", name: "local", argv: [FAKE_APP], cwd: ROOT,
+        env: { SMOLMUX_TEST_BANNER: "local ready" },
+      })
+      localPid = local.session!.pid
+      await waitUntil(async () => (await first!.request("app.capture", { name: "local" })).lines.join("").includes("local ready"))
+
+      const started = Date.now()
+      const [one, two] = await Promise.all([
+        first.request("instance.stop"),
+        second.request("instance.stop"),
+      ])
+      expect(one).toEqual(two)
+      expect(one).toMatchObject({ phase: "complete", remaining: [], preparationError: null })
+      expect(await foreground.exited).toBe(0)
+      expect(Date.now() - started).toBeLessThan(7_000)
+      await waitUntil(() => !processExists(localPid!))
+      expect(await answers(socketPath)).toBe(false)
+    } finally {
+      first?.close()
+      second?.close()
+      if (foreground && foreground.exitCode === null) foreground.kill("SIGKILL")
+      foreground?.terminal?.close()
+      if (localPid && processExists(localPid)) process.kill(localPid, "SIGKILL")
+      await endCompanionSessions(env)
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+  30_000,
+)
+
 async function answers(path: string): Promise<boolean> {
   try {
     const client = await ApiClient.connect(path)
@@ -385,5 +436,14 @@ async function answers(path: string): Promise<boolean> {
     return true
   } catch {
     return false
+  }
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM"
   }
 }

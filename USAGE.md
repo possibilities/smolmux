@@ -1,6 +1,6 @@
 # Using smolmux from an agent or application
 
-Verified against smolmux **0.9.1**, API **2**.
+Verified against smolmux **0.10.0**, API **2**.
 
 smolmux is a terminal surface you program. You declare arbitrary commands,
 choose who owns their PTYs, arrange their terminals in a Layout, and drive them
@@ -93,12 +93,21 @@ Other keys pass through, and targeted `app.input` remains available.
 The mode defaults to false on each Runtime start; callers reapply it after
 recovery. Set `confirmExit: false` to restore physical Ctrl+C delivery. The mode
 and confirmation window are shared by attached Clients. Failed termination
-shows a retry hint and leaves the Instance available.
+shows a retry hint and leaves the Instance sealed but readable.
 
 `instance.stop` (and CLI `smolmux stop`) has stronger semantics in both modes:
-it ends **all** local and Companion Sessions before replying and shutting down.
-If termination cannot be confirmed, the API fails and leaves the Instance
-available for inspection and retry.
+the first caller seals App creation synchronously, and concurrent callers join
+one observable attempt. It ends **all** local and Companion Sessions before
+replying and shutting down. If termination cannot be confirmed, the API fails,
+reports remaining Apps through status and `instance.stop.changed`, refuses new
+mutations, and accepts another stop attempt.
+
+A controller with resources outside smolmux may register its API connection
+once through `instance.prepare.register`. On every stop it receives a
+`preparing` operation identity and calls `instance.prepare.complete` after its
+bounded cleanup. An explicit error, timeout, or disconnect is returned as
+`preparationError`; smolmux still completes terminal cleanup. Raw consumers do
+not need a participant.
 
 For a Client on a headless Instance, `ctrl-b d` detaches only that Client. Every
 other key, including a prefix followed by a different key, reaches the focused
@@ -305,7 +314,9 @@ try {
 }
 ```
 
-The returned object has `client`, `socketPath`, `closed`, and `stop()`.
+The returned object has `client`, `socketPath`, `closed`, and `stop()`. The
+stop promise resolves to the completed `StopState`, including any bounded
+preparation error, after the Runtime closes.
 `environment` and `localHelper` options support controlled embedding and tests.
 It uses the same contract validation and socket as an external controller.
 Do not print progress or diagnostics on the terminal while its renderer owns it.
@@ -615,12 +626,12 @@ For implementation invariants and tests, start at [AGENTS.md](AGENTS.md),
 
 ## Upgrade the application and API together
 
-Version 0.9.0 uses API 2 and App/Session UUID labels. API 1 methods and old
-Session labels are not accepted or adopted; there are no compatibility aliases.
-Stop old Instances with their existing applications/binaries before installing
-the new source, then start fresh. Upgrade agentmux to 0.32.0 together with
-smolmux 0.9.0, including its sibling source dependency. The Companion pin and
-wire protocol do not change in this release.
+Version 0.10.0 uses API 2, observable stop attempts, and App/Session UUID
+labels. API 1 methods and old Session labels are not accepted or adopted;
+there are no compatibility aliases. Stop old Instances with their existing
+applications/binaries before installing the new source, then start fresh.
+Controllers that use bounded preparation must require smolmux 0.10.0. The
+Companion pin and wire protocol do not change in this release.
 
 Resize reaches commands through their PTY and SIGWINCH. smolmux reports DEC
 mode 2048 (in-band resize notifications) as unsupported so TUIs such as nvim

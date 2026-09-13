@@ -59,7 +59,9 @@ export class InstanceActiveError extends Error {
   }
 }
 
-export type ApiHandler = (method: Method, params: unknown) => Promise<unknown>
+export type ApiRequestContext = { connectionId: number }
+export type ApiHandler = (method: Method, params: unknown, context: ApiRequestContext) => Promise<unknown>
+export type ApiServerOptions = { onConnectionClose?: (connectionId: number) => void }
 
 type Connection = {
   id: number
@@ -89,6 +91,7 @@ export class ApiServer {
   constructor(
     readonly path: string,
     private readonly handle: ApiHandler,
+    private readonly options: ApiServerOptions = {},
   ) {}
 
   async start(): Promise<void> {
@@ -164,6 +167,7 @@ export class ApiServer {
     }
     this.connections.delete(id)
     this.sockets.delete(id)
+    if (connection) this.options.onConnectionClose?.(id)
   }
 
   private open(socket: Socket<Connection>): void {
@@ -331,7 +335,7 @@ export class ApiServer {
       return
     }
     try {
-      const result = await this.handle(method, checked.data)
+      const result = await this.handle(method, checked.data, { connectionId: connection.id })
       this.send(connection, encodeFrame(successFrame(id, result)))
     } catch (error) {
       const code: ErrorCode = error instanceof ApiFailure ? error.code : "internal_error"

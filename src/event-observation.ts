@@ -52,9 +52,10 @@ export class EventObservation {
       case "theme.changed":
         state.theme = frame.data.theme
         break
-      case "instance.stopping":
-        snapshot.availability = "unavailable"
-        snapshot.reason = "Instance is stopping"
+      case "instance.stop.changed":
+        state.stop = frame.data.stop
+        snapshot.availability = frame.data.stop.phase === "failed" ? "incomplete" : "unavailable"
+        snapshot.reason = frame.data.stop.phase === "failed" ? "Stop did not end every Session" : "Instance is stopping"
         break
     }
     return true

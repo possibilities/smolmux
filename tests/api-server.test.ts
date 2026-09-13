@@ -3,8 +3,8 @@ import { mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ApiClient } from "../src/api-client.ts"
-import { ApiServer, InstanceActiveError, lockPathFor, retiredSocketPathsFor } from "../src/api-server.ts"
-import { ApiFailure, eventFrame, type Method } from "../src/protocol.ts"
+import { ApiServer, type ApiServerOptions, InstanceActiveError, lockPathFor, retiredSocketPathsFor } from "../src/api-server.ts"
+import { ApiFailure, eventFrame } from "../src/protocol.ts"
 
 const servers: ApiServer[] = []
 const clients: ApiClient[] = []
@@ -17,9 +17,9 @@ afterEach(async () => {
   directory = ""
 })
 
-async function serve(handle: (method: Method, params: unknown) => Promise<unknown>): Promise<ApiServer> {
+async function serve(handle: ConstructorParameters<typeof ApiServer>[1], options: ApiServerOptions = {}): Promise<ApiServer> {
   directory = directory || (await mkdtemp(join(tmpdir(), "smolmux-api-")))
-  const server = new ApiServer(join(directory, "instance.api"), handle)
+  const server = new ApiServer(join(directory, "instance.api"), handle, options)
   servers.push(server)
   await server.start()
   return server
@@ -36,6 +36,21 @@ test("answers a request with a correlated response", async () => {
   const client = await connect(server)
   expect(await client.call("layout.get")).toEqual({ echoed: "layout.get" })
   expect(await client.call("app.list")).toEqual({ echoed: "app.list" })
+})
+
+test("request identity and disconnect follow the owning API connection", async () => {
+  const closed: number[] = []
+  const server = await serve(async (_method, _params, context) => ({ connectionId: context.connectionId }), {
+    onConnectionClose: (connectionId) => closed.push(connectionId),
+  })
+  const first = await connect(server)
+  const second = await connect(server)
+  const a = await first.call("layout.get") as { connectionId: number }
+  const b = await second.call("layout.get") as { connectionId: number }
+  expect(a.connectionId).not.toBe(b.connectionId)
+  first.close()
+  await Bun.sleep(20)
+  expect(closed).toEqual([a.connectionId])
 })
 
 test("validates the method and its params from the contract", async () => {

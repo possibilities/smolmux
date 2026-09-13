@@ -11,7 +11,7 @@ import { type Instance, resolveInstance } from "./instance.ts"
 import { LocalPtyOwner } from "./local-transport.ts"
 import { HOST_KEYBOARD_PROTOCOL } from "./pane-terminal.ts"
 import { ensurePrivateDirectories } from "./private-directory.ts"
-import { ApiFailure, eventFrame } from "./protocol.ts"
+import { ApiFailure, eventFrame, type StopState } from "./protocol.ts"
 import { Runtime } from "./runtime.ts"
 import { concealClientCursor, revealClientCursor } from "./terminal-client.ts"
 import { beginSynchronizedFrame, beginSynchronizedResizeClear, endSynchronizedFrame } from "./unused-space.ts"
@@ -29,7 +29,7 @@ export type ForegroundInstance = {
   client: ApiClient
   socketPath: string
   closed: Promise<void>
-  stop(): Promise<void>
+  stop(): Promise<StopState>
 }
 
 /** Embed one physical-terminal host. All control still uses the validated API. */
@@ -97,10 +97,12 @@ async function startHost(instance: Instance, foreground: boolean, environment: N
   let terminalEnd: (() => void) | null = null
   const signals = new Map<NodeJS.Signals, () => void>()
   const local = new LocalPtyOwner({ helper: localHelper ?? environment.SMOLMUX_LOCAL_PTY_PATH, report })
-  const server = new ApiServer(socketPath, async (method, params) => {
+  const server = new ApiServer(socketPath, async (method, params, context) => {
     await ready.promise
     if (!runtime) throw new ApiFailure("internal_error", "Runtime is unavailable")
-    return runtime.handle(method, params)
+    return runtime.handle(method, params, context)
+  }, {
+    onConnectionClose: (connectionId) => runtime?.connectionClosed(connectionId),
   })
   let bound = false
   const cleanup = async () => {
@@ -168,7 +170,11 @@ async function startHost(instance: Instance, foreground: boolean, environment: N
     const closed = app.waitUntilDone().finally(cleanup)
     closed.catch((error) => report(`Runtime cleanup: ${message(error)}`))
     const control = client
-    return { client: control, socketPath, closed, stop: async () => { await control.request("instance.stop"); await closed } }
+    return { client: control, socketPath, closed, stop: async () => {
+      const result = await control.request("instance.stop")
+      await closed
+      return result
+    } }
   } catch (error) {
     ready.reject(error)
     if (runtime) await runtime.shutdown(1).catch((caught) => report(`failed startup cleanup: ${message(caught)}`))

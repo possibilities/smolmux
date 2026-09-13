@@ -197,6 +197,102 @@
             },
             "method": {
               "type": "string",
+              "const": "instance.prepare.register"
+            },
+            "params": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "timeoutMs": {
+                      "type": "integer",
+                      "minimum": 100,
+                      "maximum": 10000
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "method"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 2
+            },
+            "type": {
+              "type": "string",
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "method": {
+              "type": "string",
+              "const": "instance.prepare.complete"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "operationId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "error": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1000
+                }
+              },
+              "required": [
+                "operationId"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 2
+            },
+            "type": {
+              "type": "string",
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "method": {
+              "type": "string",
               "const": "event.subscribe"
             },
             "params": {
@@ -1544,6 +1640,61 @@
                             "stage",
                             "panes"
                           ]
+                        },
+                        "stop": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "operationId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "phase": {
+                                  "type": "string",
+                                  "enum": [
+                                    "preparing",
+                                    "terminating",
+                                    "failed",
+                                    "complete"
+                                  ]
+                                },
+                                "remaining": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                                    "description": "App name: [a-z][a-z0-9_-]{0,31}"
+                                  }
+                                },
+                                "error": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "preparationError": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "operationId",
+                                "phase",
+                                "remaining",
+                                "error",
+                                "preparationError"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "Current or most recent stop attempt; failed attempts remain inspectable and retryable"
                         }
                       },
                       "required": [
@@ -1557,7 +1708,8 @@
                         "apps",
                         "host",
                         "capabilities",
-                        "layout"
+                        "layout",
+                        "stop"
                       ]
                     },
                     {
@@ -2043,6 +2195,61 @@
                     "stage",
                     "panes"
                   ]
+                },
+                "stop": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "operationId": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "phase": {
+                          "type": "string",
+                          "enum": [
+                            "preparing",
+                            "terminating",
+                            "failed",
+                            "complete"
+                          ]
+                        },
+                        "remaining": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                            "description": "App name: [a-z][a-z0-9_-]{0,31}"
+                          }
+                        },
+                        "error": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "preparationError": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "operationId",
+                        "phase",
+                        "remaining",
+                        "error",
+                        "preparationError"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Current or most recent stop attempt; failed attempts remain inspectable and retryable"
                 }
               },
               "required": [
@@ -2056,7 +2263,8 @@
                 "apps",
                 "host",
                 "capabilities",
-                "layout"
+                "layout",
+                "stop"
               ]
             }
           },
@@ -2092,6 +2300,132 @@
             "result": {
               "type": "object",
               "properties": {},
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "ok",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 2
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "properties": {
+                "operationId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "phase": {
+                  "type": "string",
+                  "enum": [
+                    "preparing",
+                    "terminating",
+                    "failed",
+                    "complete"
+                  ]
+                },
+                "remaining": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                    "description": "App name: [a-z][a-z0-9_-]{0,31}"
+                  }
+                },
+                "error": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "preparationError": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "operationId",
+                "phase",
+                "remaining",
+                "error",
+                "preparationError"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "type",
+            "id",
+            "ok",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 2
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "properties": {
+                "registered": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "timeoutMs": {
+                  "type": "integer",
+                  "minimum": 100,
+                  "maximum": 10000
+                }
+              },
+              "required": [
+                "registered",
+                "timeoutMs"
+              ],
               "additionalProperties": false
             }
           },
@@ -3629,7 +3963,7 @@
           "$ref": "#/$defs/theme.changed"
         },
         {
-          "$ref": "#/$defs/instance.stopping"
+          "$ref": "#/$defs/instance.stop.changed"
         }
       ]
     },
@@ -4991,7 +5325,7 @@
       "additionalProperties": false,
       "description": "Current state: resolved fxnk theme changed."
     },
-    "instance.stopping": {
+    "instance.stop.changed": {
       "type": "object",
       "properties": {
         "v": {
@@ -5004,11 +5338,58 @@
         },
         "event": {
           "type": "string",
-          "const": "instance.stopping"
+          "const": "instance.stop.changed"
         },
         "data": {
           "type": "object",
           "properties": {
+            "stop": {
+              "type": "object",
+              "properties": {
+                "operationId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "phase": {
+                  "type": "string",
+                  "enum": [
+                    "preparing",
+                    "terminating",
+                    "failed",
+                    "complete"
+                  ]
+                },
+                "remaining": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                    "description": "App name: [a-z][a-z0-9_-]{0,31}"
+                  }
+                },
+                "error": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "preparationError": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "operationId",
+                "phase",
+                "remaining",
+                "error",
+                "preparationError"
+              ],
+              "additionalProperties": false
+            },
             "instanceId": {
               "type": "string",
               "minLength": 1,
@@ -5027,6 +5408,7 @@
             }
           },
           "required": [
+            "stop",
             "instanceId",
             "generation",
             "sequence"
@@ -5041,7 +5423,7 @@
         "data"
       ],
       "additionalProperties": false,
-      "description": "Current state: instance.stop was accepted; the socket closes after the reply."
+      "description": "Current state: replace the observable stop attempt after preparation or terminal-cleanup progress."
     }
   }
 }

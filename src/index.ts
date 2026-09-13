@@ -185,7 +185,8 @@ async function printStatus(instance: Instance): Promise<void> {
 async function stopInstance(instance: Instance): Promise<void> {
   const client = await connect(instance)
   try {
-    await client.request("instance.stop")
+    const result = await client.request("instance.stop")
+    if (result.preparationError) process.stderr.write(`smolmux: stop preparation: ${result.preparationError}\n`)
   } finally {
     client.close()
   }

@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto"
 import { type CliRenderer, CliRenderEvents, type Selection } from "@opentui/core"
+import type { ApiRequestContext } from "./api-server.ts"
 import { ExitConfirmation } from "./exit-confirmation.ts"
 import { EventFeed } from "./event-feed.ts"
 import { VERSION } from "./cli.ts"
@@ -11,10 +13,18 @@ import {
   type Method,
   type Params,
   type Result,
+  type StopState,
 } from "./protocol.ts"
 import { Apps, type AppsOptions } from "./apps.ts"
 import { METHODS } from "./protocol.ts"
 import { Stage } from "./stage.ts"
+import { StoppingView } from "./stopping-view.ts"
+
+const DEFAULT_PREPARATION_TIMEOUT_MS = 5_000
+const STOP_READ_METHODS = new Set<Method>([
+  "state.get", "instance.status", "instance.stop", "instance.prepare.register",
+  "instance.prepare.complete", "app.list", "app.capture", "layout.get",
+])
 
 export type RuntimeOptions = {
   instanceId: string
@@ -68,6 +78,16 @@ export class Runtime {
   /** False until a caller applies a Layout; until then the Runtime composes one. */
   private layoutOwned = false
   private applyingLayout = false
+  private stopState: StopState | null = null
+  private stopAttempt: Promise<StopState> | null = null
+  private prepareOwner: { connectionId: number; timeoutMs: number } | null = null
+  private prepareWait: {
+    connectionId: number
+    operationId: string
+    timer: ReturnType<typeof setTimeout>
+    resolve: (error: string | null) => void
+  } | null = null
+  private stoppingView: StoppingView | null = null
 
   constructor(
     private readonly renderer: CliRenderer,
@@ -162,12 +182,22 @@ export class Runtime {
     this.renderer.setBackgroundColor(fxnkRamp(resolution.theme).background)
     this.stage.setTheme(resolution)
     this.exitConfirmation.setTheme(resolution)
+    if (this.stopState) this.stoppingView?.update(this.stopState, resolution)
     this.apps.setTheme(resolution)
     this.renderer.requestRender()
     this.publish("theme.changed", { theme: resolution.theme })
   }
 
   async shutdown(exitCode = 0): Promise<void> {
+    const stopping = this.stopAttempt
+    if (stopping && this.stopState?.phase !== "failed" && this.stopState?.phase !== "complete") {
+      try { await stopping }
+      catch { /* A signal still performs its ordinary host cleanup after a failed explicit stop. */ }
+    }
+    return this.finishShutdown(exitCode)
+  }
+
+  private async finishShutdown(exitCode: number): Promise<void> {
     if (this.shuttingDown) return this.donePromise
     this.shuttingDown = true
     this.exitConfirmation.dispose()
@@ -175,10 +205,14 @@ export class Runtime {
       this.renderer.off(CliRenderEvents.SELECTION, this.selectionHandler)
       this.renderer.off(CliRenderEvents.RESIZE, this.resizeHandler)
       this.renderer.clearSelection()
-      // Let go, never end: every process is the Companion's, and the next
-      // Runtime for this Instance finds them where this one left them.
+      // Host shutdown ends local processes and lets go of Companion processes.
+      // An explicit successful stop already ended both kinds above.
       try { await this.apps.shutdown() }
-      finally { this.stage.destroy() }
+      finally {
+        this.stoppingView?.destroy()
+        this.stoppingView = null
+        this.stage.destroy()
+      }
     } finally {
       this.renderer.destroy()
       process.exitCode = exitCode
@@ -187,9 +221,12 @@ export class Runtime {
   }
 
   /** The API's one way in. Params are already validated against the contract. */
-  async handle(method: Method, params: unknown): Promise<unknown> {
+  async handle(method: Method, params: unknown, context?: ApiRequestContext): Promise<unknown> {
     if (this.shuttingDown && method !== "instance.status" && method !== "state.get") {
       throw new ApiFailure("conflict", "smolmux is shutting down")
+    }
+    if (this.stopState && this.stopState.phase !== "complete" && !STOP_READ_METHODS.has(method)) {
+      throw new ApiFailure("conflict", "the Instance is sealed for stopping")
     }
     const checked = METHODS[method].params.safeParse(params ?? {})
     if (!checked.success) throw new ApiFailure("invalid_params", checked.error.message)
@@ -205,32 +242,30 @@ export class Runtime {
         return {}
       }
       case "instance.stop": {
-        // Seal before killing: a create already queued behind another one
-        // would otherwise start its process after the kills went out and
-        // never be killed.
-        this.apps.seal()
-        // Kill before answering, so the answer can be about what happened.
-        // Companion commands are time-bounded, so this cannot hang the caller.
-        const survived = await this.apps.killAll()
-        if (survived.length > 0) {
-          // Stay up. Reporting success here would leave live processes with
-          // nothing managing them and a caller that believes they are gone;
-          // staying means session.list still names what is left and the
-          // caller can retry against the same Instance.
-          this.apps.unseal()
-          this.publishRoster()
-          throw new ApiFailure(
-            "companion_error",
-            `could not end ${survived.length} Session(s): ${survived.join(", ")}. The Instance is still running.`,
-          )
+        return this.requestStop()
+      }
+      case "instance.prepare.register": {
+        if (!context) throw new ApiFailure("invalid_request", "stop preparation requires an API connection")
+        const timeoutMs = (params as Params<"instance.prepare.register">).timeoutMs ?? DEFAULT_PREPARATION_TIMEOUT_MS
+        if (this.stopAttempt) throw new ApiFailure("conflict", "stop preparation is already in progress")
+        if (this.prepareOwner && this.prepareOwner.connectionId !== context.connectionId) {
+          throw new ApiFailure("conflict", "another API connection owns stop preparation")
         }
-        this.availability = "unavailable"
-        this.unavailableReason = "Instance is stopping"
-        this.publish("instance.stopping", {})
-        // Answer first: the reply is written before anything is torn down.
-        setTimeout(() => {
-          void this.shutdown(0).catch((error) => this.options.report?.(`stop failed: ${message(error)}`))
-        }, 0)
+        this.prepareOwner = { connectionId: context.connectionId, timeoutMs }
+        return { registered: true, timeoutMs }
+      }
+      case "instance.prepare.complete": {
+        if (!context || this.prepareOwner?.connectionId !== context.connectionId) {
+          throw new ApiFailure("conflict", "this API connection does not own stop preparation")
+        }
+        const request = params as Params<"instance.prepare.complete">
+        const waiting = this.prepareWait
+        if (!waiting || waiting.operationId !== request.operationId || waiting.connectionId !== context.connectionId) {
+          throw new ApiFailure("conflict", "that stop attempt is not awaiting preparation")
+        }
+        clearTimeout(waiting.timer)
+        this.prepareWait = null
+        waiting.resolve(request.error ?? null)
         return {}
       }
       case "event.subscribe":
@@ -292,7 +327,114 @@ export class Runtime {
       theme: this.theme.theme,
       apps: this.apps.list(),
       layout: this.stage.view,
+      stop: this.stopState ? structuredClone(this.stopState) : null,
     }
+  }
+
+  /** A preparation registration owns no lifetime beyond its API connection. */
+  connectionClosed(connectionId: number): void {
+    if (this.prepareOwner?.connectionId !== connectionId) return
+    this.prepareOwner = null
+    const waiting = this.prepareWait
+    if (!waiting || waiting.connectionId !== connectionId) return
+    clearTimeout(waiting.timer)
+    this.prepareWait = null
+    waiting.resolve("Stop preparation connection closed")
+  }
+
+  /** Seal synchronously, then let every caller join this one observable attempt. */
+  private requestStop(): Promise<StopState> {
+    if (this.stopAttempt) return this.stopAttempt
+    if (this.stopState?.phase === "complete") return Promise.resolve(structuredClone(this.stopState))
+
+    this.apps.seal()
+    const state: StopState = {
+      operationId: randomUUID(),
+      phase: "preparing",
+      remaining: this.liveAppNames(),
+      error: null,
+      preparationError: null,
+    }
+    this.availability = "unavailable"
+    this.unavailableReason = "Instance is stopping"
+    this.stopState = state
+    this.stoppingView ??= new StoppingView(this.renderer, this.theme)
+    this.publishStop()
+
+    let attempt!: Promise<StopState>
+    attempt = this.runStop(state).finally(() => {
+      if (this.stopState?.phase === "failed" && this.stopAttempt === attempt) this.stopAttempt = null
+    })
+    this.stopAttempt = attempt
+    return attempt
+  }
+
+  private async runStop(state: StopState): Promise<StopState> {
+    state.preparationError = await this.awaitPreparation(state.operationId)
+    state.phase = "terminating"
+    state.remaining = this.liveAppNames()
+    this.publishStop()
+
+    let survived: string[]
+    try {
+      survived = await this.apps.killAll()
+    } catch (error) {
+      state.phase = "failed"
+      state.remaining = this.liveAppNames()
+      state.error = `terminal cleanup failed: ${message(error)}`
+      this.availability = "incomplete"
+      this.unavailableReason = "Stop did not finish terminal cleanup"
+      this.publishRoster()
+      this.publishStop()
+      throw error instanceof ApiFailure ? error : new ApiFailure("internal_error", state.error)
+    }
+    if (survived.length > 0) {
+      state.phase = "failed"
+      state.remaining = survived
+      state.error = `could not end ${survived.length} Session(s): ${survived.join(", ")}`
+      this.availability = "incomplete"
+      this.unavailableReason = "Stop did not end every Session"
+      this.publishRoster()
+      this.publishStop()
+      throw new ApiFailure("companion_error", `${state.error}. The Instance remains sealed; retry instance.stop to finish.`)
+    }
+
+    state.phase = "complete"
+    state.remaining = []
+    state.error = null
+    this.publishStop()
+    // The response is enqueued before this timer tears down the API socket.
+    setTimeout(() => {
+      void this.finishShutdown(0).catch((error) => this.options.report?.(`stop failed: ${message(error)}`))
+    }, 0)
+    return structuredClone(state)
+  }
+
+  private awaitPreparation(operationId: string): Promise<string | null> {
+    const owner = this.prepareOwner
+    if (!owner) return Promise.resolve(null)
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.prepareWait?.operationId !== operationId) return
+        this.prepareWait = null
+        resolve(`Stop preparation timed out after ${owner.timeoutMs} ms`)
+      }, owner.timeoutMs)
+      this.prepareWait = { connectionId: owner.connectionId, operationId, timer, resolve }
+    })
+  }
+
+  private liveAppNames(): string[] {
+    return this.apps.list()
+      .filter((app) => app.session !== null || app.state === "starting" || app.state === "resuming")
+      .map((app) => app.name)
+      .sort()
+  }
+
+  private publishStop(): void {
+    if (!this.stopState) return
+    const stop = structuredClone(this.stopState)
+    this.stoppingView?.update(stop, this.theme)
+    this.publish("instance.stop.changed", { stop })
   }
 
   /**
@@ -301,7 +443,7 @@ export class Runtime {
    * instead, so the empty state never claims nothing is running.
    */
   private refit(): void {
-    if (this.shuttingDown) return
+    if (this.shuttingDown || this.stopState) return
     if (this.applyingLayout || this.shuttingDown) return
     if (this.layoutOwned) this.stage.refit()
     else this.applyDefaultLayout()
@@ -327,7 +469,7 @@ export class Runtime {
    * drawn. Every Pane hears its own size exactly once per resize.
    */
   private onResize(): void {
-    if (this.shuttingDown) return
+    if (this.shuttingDown || this.stopState) return
     const size = this.stage.size
     this.stage.refit("resize")
     if (size.cols !== this.lastStage.cols || size.rows !== this.lastStage.rows) {
@@ -337,6 +479,10 @@ export class Runtime {
   }
 
   private onSelection(selection: Selection): void {
+    if (this.stopState) {
+      this.renderer.clearSelection()
+      return
+    }
     // A Pane keeps a gesture provisional until it has covered two cells.
     // Treat gestures that never cross that threshold as nothing at all.
     if (selection.isStart) {
@@ -356,7 +502,7 @@ export class Runtime {
   }
 
   private publish<E extends EventName>(event: E, data: EventData<E>): void {
-    if (this.shuttingDown && event !== "instance.stopping") return
+    if (this.shuttingDown) return
     this.feed.publish(event, data)
   }
 }

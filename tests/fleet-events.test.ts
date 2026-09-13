@@ -18,7 +18,7 @@ function status(): InstanceStatus {
   return { version: "0.8.0", pid: 42, name: "default", instance_id: "stable-id", socket: "/tmp/test.api",
     stage: { cols: 80, rows: 24 }, theme: "dark", apps: [],
     host: "headless", capabilities: { local: false, companion: true },
-    layout: { visible: [], revision: 0, root: null, focus: null, stage: { cols: 80, rows: 24 }, panes: [] } }
+    layout: { visible: [], revision: 0, root: null, focus: null, stage: { cols: 80, rows: 24 }, panes: [] }, stop: null }
 }
 async function serve(handle: ConstructorParameters<typeof ApiServer>[1] = async () => ({})) {
   const dir = await mkdtemp("/tmp/smolmux-events-")
@@ -137,7 +137,12 @@ test("lifetime restart and generation replacement invalidate prior observation; 
   expect(observation.current?.state?.apps[0]?.state).toBe("unreachable")
   observation.apply(eventFrame("apps.changed", { ...ctx, sequence: 2, apps: [], availability: "ready", reason: null }))
   expect(observation.current?.state?.apps).toEqual([])
-  observation.apply(eventFrame("theme.changed", { ...ctx, instanceId: other.snapshot().instanceId, sequence: 3, theme: "light" }))
+  observation.apply(eventFrame("instance.stop.changed", { ...ctx, sequence: 3, stop: {
+    operationId: "00000000-0000-4000-8000-000000000002", phase: "failed", remaining: ["a"],
+    error: "still running", preparationError: null,
+  } }))
+  expect(observation.current).toMatchObject({ availability: "incomplete", state: { stop: { phase: "failed", remaining: ["a"] } } })
+  observation.apply(eventFrame("theme.changed", { ...ctx, instanceId: other.snapshot().instanceId, sequence: 4, theme: "light" }))
   expect(observation.current).toBeNull()
   observation.replace(feed.snapshot())
   observation.apply({ ...eventFrame("theme.changed", { ...ctx, theme: "light" }), data: { ...ctx, generation: 2, theme: "light" } } as unknown as EventFrame)

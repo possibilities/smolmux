@@ -35,12 +35,13 @@ no status claim beyond the record; it does not certify every detail as current.
 | [0022: A copy reaches every Client, and nothing is read back](0022-a-copy-reaches-every-client-and-nothing-is-read-back.md) | Recorded | — |
 | [0023: One filtered event feed with an atomic projection](0023-one-filtered-event-feed-with-an-atomic-projection.md) | Accepted | — |
 | [0024: App declarations own process policy](0024-app-declarations-own-process-policy.md) | Recorded | — |
-| [0025: Local ownership and foreground hosts](0025-local-ownership-and-foreground-hosts.md) | Recorded | — |
-| [0026: Opt-in Instance exit confirmation](0026-opt-in-instance-exit-confirmation.md) | Recorded | — |
+| [0025: Local ownership and foreground hosts](0025-local-ownership-and-foreground-hosts.md) | Partially superseded | [ADR 0031](0031-one-observable-stop-operation.md) defines explicit Instance stop; foreground terminal-loss and signal behavior remains. |
+| [0026: Opt-in Instance exit confirmation](0026-opt-in-instance-exit-confirmation.md) | Partially superseded | [ADR 0031](0031-one-observable-stop-operation.md) defines the resulting stop operation and surface; the opt-in gesture remains. |
 | [0027: The observatory is an API consumer](0027-observatory-is-an-api-consumer.md) | Recorded | — |
 | [0028: Source-only installation](0028-source-only-installation.md) | Partially superseded | Source-only distribution remains accepted. [ADR 0016](0016-sessions-are-arbitrary-commands.md) removes the pinned Fx build named below; the current source installer builds the pinned Companion and runs doctor. |
 | [0029: Agent state is a glyph and a weight, never a hue](0029-state-by-glyph-not-hue.md) | Superseded for agent/tray state | [ADR 0016](0016-sessions-are-arbitrary-commands.md) removes the Agent list and its state glyphs. The original Fx-specific design tradeoff below is historical; current terminal/theme behavior belongs to repository guidance. |
 | [0030: Pane Focus policy](0030-pane-focus-policy.md) | Recorded | — |
+| [0031: One observable stop operation](0031-one-observable-stop-operation.md) | Recorded | — |
 
 ## Identifier history
 

@@ -186,7 +186,13 @@
 - Every `void`-discarded promise needs a `.catch` that reaches the log.
   OpenTUI installs an `unhandledRejection` handler that is `console.error`,
   so a rejection nobody catches is a stack trace across the alternate screen.
-- `instance.stop` seals the roster synchronously before it kills anything.
+- `instance.stop` is one observable operation and seals the roster
+  synchronously before preparation or termination. Concurrent callers join;
+  a failed attempt stays sealed, readable, and retryable. One API connection
+  may own a bounded generic preparation acknowledgement; disconnect, timeout,
+  or its reported error never blocks terminal cleanup.
+- Preserve the last committed frame as inert context while stopping and show
+  the operation phase in one quiet row. API state remains the live truth.
   Without that an `app.create` already queued behind another one starts its
   process after the kills went out, is never killed, and reappears on the next
   start because labels are the record.

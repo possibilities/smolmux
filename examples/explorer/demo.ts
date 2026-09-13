@@ -73,6 +73,7 @@ export function demoSnapshot(): StateSnapshot {
       host: "foreground",
       capabilities: { local: true, companion: true },
       layout: { root, visible: ["editor", "preview", "tests"], focus: "editor", revision: 1, stage, panes },
+      stop: null,
     },
   }
 }

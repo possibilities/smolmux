@@ -1,5 +1,9 @@
 # Local ownership and foreground hosts
 
+Status review 2026-09-13: partially superseded. [ADR 0031](0031-one-observable-stop-operation.md)
+defines explicit `instance.stop` as one observable, sealed operation. Foreground
+terminal-loss and signal behavior remains here.
+
 Amends [0017](0017-the-runtime-is-headless.md) and
 [0007](0007-companion-held-shared-runtime.md) only for headless-only hosting and
 Companion-only production transport. The shared rendering, sizing and guarded

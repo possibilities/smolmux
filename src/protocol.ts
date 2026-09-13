@@ -172,6 +172,16 @@ export const captureSchema = z.object({
 })
 export type Capture = z.infer<typeof captureSchema>
 
+export const stopPhaseSchema = z.enum(["preparing", "terminating", "failed", "complete"])
+export const stopStateSchema = z.object({
+  operationId: z.string().uuid(),
+  phase: stopPhaseSchema,
+  remaining: z.array(appName),
+  error: z.string().nullable(),
+  preparationError: z.string().nullable(),
+}).strict()
+export type StopState = z.infer<typeof stopStateSchema>
+
 /**
  * How much input one call may carry. Events are applied in order on one
  * connection, so a batch is also the unit of ordering: a caller that needs
@@ -272,6 +282,7 @@ export const instanceStatusSchema = z.object({
   host: z.enum(["headless", "foreground"]),
   capabilities: z.object({ local: z.boolean(), companion: z.boolean() }).strict(),
   layout: layoutViewSchema,
+  stop: stopStateSchema.nullable().describe("Current or most recent stop attempt; failed attempts remain inspectable and retryable"),
 })
 export type InstanceStatus = z.infer<typeof instanceStatusSchema>
 
@@ -327,8 +338,18 @@ export const METHODS = {
     params: z.object({ confirmExit: z.boolean() }).strict(), result: empty,
   },
   "instance.stop": {
-    description: "Seal declarations, end every local and Companion process, then reply and stop. A failed termination leaves the Instance available to retry.",
-    params: empty, result: empty,
+    description: "Join the current stop attempt, or synchronously seal declarations and begin one. A successful result confirms every local and Companion process ended and reports any bounded preparation failure. A failed termination stays sealed, inspectable, and retryable.",
+    params: empty, result: stopStateSchema,
+  },
+  "instance.prepare.register": {
+    description: "Register this API connection as the Instance's one optional bounded stop-preparation participant. The registration ends when this connection closes.",
+    params: z.object({ timeoutMs: z.int().min(100).max(10_000).optional() }).strict(),
+    result: z.object({ registered: z.literal(true), timeoutMs: z.int().min(100).max(10_000) }).strict(),
+  },
+  "instance.prepare.complete": {
+    description: "Complete this connection's preparation for the named stop attempt. An optional error is reported in the stop outcome; terminal cleanup proceeds either way.",
+    params: z.object({ operationId: z.string().uuid(), error: z.string().min(1).max(1_000).optional() }).strict(),
+    result: empty,
   },
   "event.subscribe": {
     description: "Replace connection-local literal filters; acknowledgment is the replacement boundary. Default *, exact names, or trailing-* prefixes.",
@@ -404,7 +425,7 @@ export const EVENTS = {
   },
   "stage.changed": { description: "Current state: physical Stage size changed.", data: stageSchema },
   "theme.changed": { description: "Current state: resolved fxnk theme changed.", data: z.object({ theme }) },
-  "instance.stopping": { description: "Current state: instance.stop was accepted; the socket closes after the reply.", data: empty },
+  "instance.stop.changed": { description: "Current state: replace the observable stop attempt after preparation or terminal-cleanup progress.", data: z.object({ stop: stopStateSchema }) },
 } as const
 
 export type EventName = keyof typeof EVENTS

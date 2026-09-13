@@ -74,6 +74,14 @@ type AppView = {
   error: string | null
   labels: Record<string, string>
 }
+
+type StopState = {
+  operationId: string
+  phase: "preparing" | "terminating" | "failed" | "complete"
+  remaining: string[]
+  error: string | null
+  preparationError: string | null
+}
 ```
 
 Environment values are never published. Size comes from the current Session,
@@ -84,8 +92,11 @@ labels `owner`, `instance`, and `app`; Session UUID lives in `session.id`.
 `InstanceStatus` contains `version`, Runtime `pid`, Instance `name`, stable
 `instance_id`, `socket`, `stage:{cols,rows}`, `theme:"dark"|"light"`, `apps:AppView[]`,
 `layout:LayoutView`, `host:"headless"|"foreground"`, and
-`capabilities:{local:boolean,companion:boolean}`. Capabilities identify installed
-Runtime implementations; a launch can still fail if its helper cannot be resolved.
+`capabilities:{local:boolean,companion:boolean}`, and `stop:StopState|null`.
+Capabilities identify installed Runtime implementations; a launch can still
+fail if its helper cannot be resolved. `stop` is the current or most recent
+attempt and remains present after a failed attempt so another Client can
+diagnose and retry it.
 
 ## Methods
 
@@ -112,11 +123,41 @@ Signals still follow the host's ordinary shutdown semantics.
 
 ### `instance.stop`
 
-Params `{}`. Seals declarations synchronously, waits for queued App work,
-terminates all local and Companion Sessions, then returns `{}` and shuts down.
-`instance.stopping` precedes teardown and the response precedes socket close.
-If termination is unconfirmed, returns `companion_error` naming survivors and
-keeps the Instance available for retry. A later stop may finish it.
+Params `{}`. The first caller seals declarations synchronously, creates an
+observable attempt, runs bounded optional preparation, waits for queued App
+work, and terminates every local and Companion Session. Concurrent callers
+join that attempt. Success returns its complete `StopState`, including any
+`preparationError`, then shuts down after the response. Success confirms
+terminal cleanup even when preparation reported an error.
+
+If termination is unconfirmed, the call returns `companion_error`; status and
+`instance.stop.changed` retain phase `failed`, its error, and exact remaining
+Apps. The Instance remains sealed: state/status, `app.list`, `app.capture`, and
+`layout.get` remain readable, while mutations are refused. A later
+`instance.stop` creates a new attempt against observed survivors.
+
+The stopping surface freezes the last committed frame as inert context before
+Session renderables disappear. One quiet bottom row shows preparation,
+termination, completion, or a failure with a retry path. API state remains the
+live process truth throughout.
+
+### `instance.prepare.register`
+
+Params `{timeoutMs?:number}`. Returns
+`{registered:true,timeoutMs:number}`. Registers the calling API connection as
+the Instance's one optional stop-preparation participant. The default is
+5000 ms; the accepted range is 100–10000 ms. Repeating on the same connection
+updates the bound; another connection receives `conflict`. Registration ends
+when its connection closes.
+
+### `instance.prepare.complete`
+
+Params `{operationId:string,error?:string}`. Returns `{}`. Only the registered
+connection may complete the attempt currently in phase `preparing`. The
+operation identity comes from `instance.stop.changed` or state. An optional
+error becomes `preparationError`. Disconnect or timeout records its own error;
+all three outcomes proceed to terminal cleanup. This acknowledgement never
+calls or completes `instance.stop` by itself.
 
 A foreground host ending by terminal loss or signal instead terminates locals
 and releases Companion Sessions for later Adoption. Detaching a headless Client
@@ -350,7 +391,8 @@ Every event advances the sequence, even when filters exclude it; gaps are
 normal. No durable event replay exists. No terminal content appears in snapshots.
 Unidentified Companion inventory makes Adoption incomplete; failed/pending
 Adoption is unavailable. Known unreachable Apps alone do not make the inventory
-incomplete. A stopping Instance is unavailable. Above the projection bound,
+incomplete. A preparing or terminating Instance is unavailable; a failed stop
+is incomplete and remains inspectable. Above the projection bound,
 state is null with a reason; it is never truncated.
 
 Subscribe first, buffer events, request state.get, then replace state at its
@@ -377,7 +419,7 @@ Every event data includes `{instanceId:string,generation:1,sequence:number}`.
 | `stage.changed` | current state | `cols`, `rows` |
 | `theme.changed` | current state | `theme:"dark"|"light"` |
 | `state.invalidated` | current state | `reason`: replace observation with another snapshot |
-| `instance.stopping` | current state | no additional data |
+| `instance.stop.changed` | current state | `stop:StopState`: replace the current stop attempt |
 | `session.changed` | transient | `name`, `sessionId`, `title`: output/title reached the emulator; debounced about 100 ms, including hidden terminals |
 | `session.exited` | transient | `name`, `sessionId`, nullable `code` and `signal`, `reason`, `cause:"natural"|"hidden"|"remove"|"restart"|"shutdown"` |
 
@@ -398,7 +440,7 @@ the exit reason or the API version.
 | `unknown_method` | Method is not in this API |
 | `invalid_params` | Contract violation, bad policy, duplicate leaf, reserved label, unavailable adopted command |
 | `not_found` | Unknown App, or mouse target has no fitted Pane |
-| `conflict` | Existing App name, stale Revision/Session guard, removal underway, or Instance shutting down |
+| `conflict` | Existing App name, stale Revision/Session guard, removal underway, sealed Instance, or preparation-owner mismatch |
 | `not_running` | No Session to capture or App state cannot accept input |
 | `unsupported` | Requested PTY owner is unavailable in this Runtime |
 | `process_error` | Local process operation failed |

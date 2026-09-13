@@ -163,7 +163,6 @@ export class Apps {
   }
   setTheme(theme: FxnkThemeResolution): void { this.executions.setTheme(theme) }
   seal(): void { this.sealed = true; this.executions.seal() }
-  unseal(): void { this.sealed = false; this.executions.unseal() }
 
   async killAll(localOnly = false): Promise<string[]> {
     this.seal()

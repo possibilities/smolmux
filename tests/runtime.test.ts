@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { createTestRenderer } from "@opentui/core/testing"
 import { fileURLToPath } from "node:url"
-import type { EventName, InstanceStatus, LayoutView, AppView } from "../src/protocol.ts"
+import type { EventName, InstanceStatus, LayoutView, AppView, StopState } from "../src/protocol.ts"
 import type { SessionExit, TransportHandlers } from "../src/session-transport.ts"
 import { eventSocketFrameSchema } from "../src/event-schema.ts"
 import { EMPTY_LAYOUT, Runtime } from "../src/runtime.ts"
@@ -41,8 +41,8 @@ async function harness(prepare?: (companion: FakeCompanion, transport: PtyTransp
     companion,
     transport,
     events,
-    call: <T>(method: EventName extends never ? never : Parameters<Runtime["handle"]>[0], params: unknown = {}) =>
-      runtime.handle(method, params) as Promise<T>,
+    call: <T>(method: EventName extends never ? never : Parameters<Runtime["handle"]>[0], params: unknown = {}, connectionId?: number) =>
+      runtime.handle(method, params, connectionId === undefined ? undefined : { connectionId }) as Promise<T>,
     close: async () => {
       await runtime.shutdown()
     },
@@ -62,7 +62,7 @@ test("a fresh Instance draws its empty state and reports itself", async () => {
   const app = await harness()
   try {
     const status = await app.call<InstanceStatus>("instance.status")
-    expect(status).toMatchObject({ name: "default", instance_id: INSTANCE, theme: "dark", apps: [] })
+    expect(status).toMatchObject({ name: "default", instance_id: INSTANCE, theme: "dark", apps: [], stop: null })
     expect(status.stage).toEqual({ cols: 100, rows: 30 })
     expect(status.layout.root).toEqual(EMPTY_LAYOUT)
     await app.setup.renderOnce()
@@ -288,13 +288,124 @@ test("stop ends every Session, then answers, then ends the Runtime", async () =>
   const app = await harness()
   try {
     await app.call("app.create", { pty: "companion", name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
-    expect(await app.call<Record<string, never>>("instance.stop")).toEqual({})
-    expect(app.events.some((entry) => entry.event === "instance.stopping")).toBe(true)
+    expect(await app.call<StopState>("instance.stop")).toMatchObject({ phase: "complete", remaining: [], error: null })
+    expect(app.events.some((entry) => entry.event === "instance.stop.changed")).toBe(true)
     await app.runtime.waitUntilDone()
     expect(app.companion.killed).toEqual([`smolmux-${INSTANCE}-tray`])
   } finally {
     await app.close()
   }
+})
+
+test("concurrent stops share preparation and keep the committed frame visible", async () => {
+  const app = await harness()
+  const killGate = Promise.withResolvers<void>()
+  try {
+    await app.call("app.create", { pty: "companion", name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
+    await app.call("layout.apply", {
+      visible: ["tray"], root: { row: [{ app: "tray" }, { text: "held context", size: 24 }] }, focus: "tray",
+    })
+    await app.setup.renderOnce()
+    expect(app.setup.captureCharFrame()).toContain("held context")
+
+    expect(await app.call<{ registered: true; timeoutMs: number }>("instance.prepare.register", {}, 1)).toEqual({ registered: true, timeoutMs: 5_000 })
+    expect(await app.call<{ registered: true; timeoutMs: number }>("instance.prepare.register", { timeoutMs: 1_000 }, 1)).toEqual({ registered: true, timeoutMs: 1_000 })
+    await expect(app.call("instance.prepare.register", {}, 2)).rejects.toMatchObject({ code: "conflict" })
+
+    const originalKill = app.companion.kill.bind(app.companion)
+    app.companion.kill = async (name) => { await killGate.promise; await originalKill(name) }
+    const first = app.call<StopState>("instance.stop")
+    const preparing = (app.events.findLast((entry) => entry.event === "instance.stop.changed")!.data as { stop: StopState }).stop
+    expect(preparing).toMatchObject({ phase: "preparing", remaining: ["tray"] })
+    const second = app.call<StopState>("instance.stop")
+    await expect(app.call("app.create", { pty: "companion", name: "late", argv: [FAKE_APP], cwd: process.cwd() }))
+      .rejects.toMatchObject({ code: "conflict" })
+    await expect(app.call("instance.prepare.complete", { operationId: preparing.operationId }, 2))
+      .rejects.toMatchObject({ code: "conflict" })
+
+    await app.setup.renderOnce()
+    expect(app.setup.captureCharFrame()).toContain("held context")
+    expect(app.setup.captureCharFrame()).toContain("stopping… preparing")
+    await app.call("instance.prepare.complete", { operationId: preparing.operationId }, 1)
+    await waitFor(() => app.events.some((entry) => entry.event === "instance.stop.changed"
+      && (entry.data as { stop: StopState }).stop.phase === "terminating"))
+    await app.setup.renderOnce()
+    expect(app.setup.captureCharFrame()).toContain("held context")
+    expect(app.setup.captureCharFrame()).toContain("1 App remaining")
+
+    killGate.resolve()
+    const [one, two] = await Promise.all([first, second])
+    expect(one).toEqual(two)
+    expect(one).toMatchObject({ operationId: preparing.operationId, phase: "complete", remaining: [], preparationError: null })
+    await app.runtime.waitUntilDone()
+    expect(app.companion.killed).toEqual([`smolmux-${INSTANCE}-tray`])
+  } finally {
+    killGate.resolve()
+    await app.close()
+  }
+})
+
+test("a preparation-owner disconnect is reported and does not block terminal cleanup", async () => {
+  const app = await harness()
+  try {
+    await app.call("app.create", { pty: "companion", name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
+    await app.call("instance.prepare.register", { timeoutMs: 1_000 }, 7)
+    const stopping = app.call<StopState>("instance.stop")
+    const operationId = (await app.call<InstanceStatus>("instance.status")).stop!.operationId
+    app.runtime.connectionClosed(7)
+    expect(await stopping).toMatchObject({
+      operationId,
+      phase: "complete",
+      remaining: [],
+      preparationError: "Stop preparation connection closed",
+    })
+    await app.runtime.waitUntilDone()
+  } finally { await app.close() }
+})
+
+test("bounded preparation timeout is explicit in a successful stop", async () => {
+  const app = await harness()
+  try {
+    await app.call("instance.prepare.register", { timeoutMs: 100 }, 9)
+    expect(await app.call<StopState>("instance.stop")).toMatchObject({
+      phase: "complete",
+      remaining: [],
+      preparationError: "Stop preparation timed out after 100 ms",
+    })
+    await app.runtime.waitUntilDone()
+  } finally { await app.close() }
+})
+
+test("a participant error is returned without weakening terminal completion", async () => {
+  const app = await harness()
+  try {
+    await app.call("instance.prepare.register", {}, 10)
+    const stopping = app.call<StopState>("instance.stop")
+    const operationId = (await app.call<InstanceStatus>("instance.status")).stop!.operationId
+    await app.call("instance.prepare.complete", { operationId, error: "native cleanup incomplete" }, 10)
+    expect(await stopping).toMatchObject({
+      phase: "complete", remaining: [], error: null, preparationError: "native cleanup incomplete",
+    })
+    await app.runtime.waitUntilDone()
+  } finally { await app.close() }
+})
+
+test("a host signal joins an in-flight explicit stop before teardown", async () => {
+  const app = await harness()
+  try {
+    await app.call("instance.prepare.register", { timeoutMs: 1_000 }, 11)
+    const stopping = app.call<StopState>("instance.stop")
+    const operationId = (await app.call<InstanceStatus>("instance.status")).stop!.operationId
+    let signalFinished = false
+    const signal = app.runtime.shutdown().then(() => { signalFinished = true })
+    await Bun.sleep(20)
+    expect(signalFinished).toBe(false)
+    expect(app.runtime.stopped).toBe(false)
+    await app.call("instance.prepare.complete", { operationId }, 11)
+    await stopping
+    await signal
+    expect(app.runtime.stopped).toBe(true)
+  } finally { await app.close() }
 })
 
 test.each([
@@ -318,7 +429,7 @@ test.each([
   })
   try {
     expect(app.runtime.apps.view("survivor").state).toBe("running")
-    expect(await app.call<Record<string, never>>("instance.stop")).toEqual({})
+    expect(await app.call<StopState>("instance.stop")).toMatchObject({ phase: "complete", remaining: [] })
     await app.runtime.waitUntilDone()
     const exits = app.events.filter(({ event }) => event === "session.exited")
     expect(exits).toHaveLength(1)
@@ -454,24 +565,31 @@ test("stop that cannot end a Session says so and stays up", async () => {
   try {
     await app.call("app.create", { pty: "companion", name: "tray", argv: [FAKE_APP], cwd: process.cwd() })
     await app.call("app.create", { pty: "companion", name: "dock", argv: [FAKE_APP], cwd: process.cwd() })
+    await app.call("layout.apply", {
+      visible: ["tray", "dock"], root: { row: [{ app: "tray" }, { text: "held context", size: 24 }] }, focus: "tray",
+    })
+    await app.setup.renderOnce()
     app.companion.add({ name: `smolmux-${INSTANCE}-tray` })
     app.companion.killRefuses.add(`smolmux-${INSTANCE}-tray`)
 
     // Reporting success would leave a live process nothing is managing and a
     // caller who believes it is gone.
     await expect(app.call("instance.stop")).rejects.toMatchObject({ code: "companion_error" })
-    expect(app.events.some((entry) => entry.event === "instance.stopping")).toBe(false)
+    expect(app.events.some((entry) => entry.event === "instance.stop.changed")).toBe(true)
 
-    // Still there to retry against, and still saying what is left.
+    // Still there to retry against, still saying what is left, and sealed.
     expect(app.runtime.stopped).toBe(false)
     expect(await app.call("app.list")).toBeDefined()
-
-    // The seal came off, so the Instance is usable rather than a zombie.
-    await app.call("app.create", { pty: "companion", name: "third", argv: [FAKE_APP], cwd: process.cwd() })
+    expect((await app.call<InstanceStatus>("instance.status")).stop).toMatchObject({ phase: "failed", remaining: ["tray"] })
+    await app.setup.renderOnce()
+    expect(app.setup.captureCharFrame()).toContain("held context")
+    expect(app.setup.captureCharFrame()).toContain("stop incomplete: tray; retry to finish")
+    await expect(app.call("app.create", { pty: "companion", name: "third", argv: [FAKE_APP], cwd: process.cwd() }))
+      .rejects.toMatchObject({ code: "conflict" })
 
     // Retrying against the same Instance finishes once the Companion lets go.
     app.companion.killRefuses.clear()
-    expect(await app.call<Record<string, never>>("instance.stop")).toEqual({})
+    expect(await app.call<StopState>("instance.stop")).toMatchObject({ phase: "complete", remaining: [] })
     await app.runtime.waitUntilDone()
   } finally {
     await app.close()
@@ -523,6 +641,6 @@ test("configured Ctrl+C stops all Sessions including hidden Companion Apps", asy
     app.setup.mockInput.pressCtrlC()
     await app.runtime.waitUntilDone()
     expect(app.companion.killed.sort()).toEqual([`smolmux-${INSTANCE}-hidden`, `smolmux-${INSTANCE}-shown`])
-    expect(app.events.some(event => event.event === "instance.stopping")).toBe(true)
+    expect(app.events.some(event => event.event === "instance.stop.changed")).toBe(true)
   } finally { await app.close() }
 })
