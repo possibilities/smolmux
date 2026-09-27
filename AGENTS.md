@@ -259,7 +259,7 @@
   override is the development loop. `smolmux doctor` runs the same resolution and
   check without binding anything.
 - Moving the pin is a source-installation act: land the fork change on
-  `integration`, push, then use `~/code/zmax/scripts/pin-companion.sh --apply`
+  `integration`, push, then use `~/workshops/zmax/scripts/pin-companion.sh --apply`
   to move `companion.json` to the commit and `<fork version>+arthack.<12 hex>`.
   The pinned build is always made by
   `scripts/build-companion.sh`, reached by `scripts/install.sh` and
