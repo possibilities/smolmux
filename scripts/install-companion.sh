@@ -10,7 +10,7 @@ set -euo pipefail
 #   scripts/install-companion.sh [--check] [--rebuild]
 #
 # SMOLMUX_COMPANION_INSTALL_DIR (default ~/.local/bin) is where it goes;
-# SMOLMUX_COMPANION_CHECKOUT (default ~/source/neurosnap--zmx) is where the pinned commit is
+# SMOLMUX_COMPANION_CHECKOUT (default ~/workshops/zmax/fork) is where the pinned commit is
 # built from, see scripts/build-companion.sh.
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

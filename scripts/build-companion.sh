@@ -9,7 +9,7 @@ set -euo pipefail
 #   scripts/build-companion.sh --output PATH [--target TRIPLE]
 #
 # The source is the pinned commit itself, never a checkout's working tree:
-# from SMOLMUX_COMPANION_CHECKOUT (default ~/source/neurosnap--zmx when it exists) through a
+# from SMOLMUX_COMPANION_CHECKOUT (default ~/workshops/zmax/fork when it exists) through a
 # detached worktree when that repository has the commit, else a shallow fetch
 # of the commit from the pin's repository into a temporary directory. Zig of
 # the fork's minimum series and git are required.
@@ -78,8 +78,8 @@ trap cleanup EXIT
 
 # The source: the pinned commit, from wherever it already is.
 checkout="${SMOLMUX_COMPANION_CHECKOUT:-}"
-if [[ -z "$checkout" && -d "$HOME/source/neurosnap--zmx/.git" ]]; then
-  checkout="$HOME/source/neurosnap--zmx"
+if [[ -z "$checkout" && -d "$HOME/workshops/zmax/fork/.git" ]]; then
+  checkout="$HOME/workshops/zmax/fork"
 fi
 companion_source="$work_dir/source"
 if [[ -n "$checkout" ]] && git -C "$checkout" cat-file -e "$commit^{commit}" 2>/dev/null; then
