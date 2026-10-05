@@ -23,5 +23,5 @@ workflow through the API. The [API reference](docs/api.md), `smolmux api`, and
 
 [Source installation](docs/source-install.md) covers local-only installs and
 platform requirements. Development uses `bun run typecheck`, `bun test`, and
-`scripts/local-gate.sh`. [CONTEXT.md](CONTEXT.md) defines the vocabulary;
+`scripts/local-gate.sh`. [GLOSSARY.md](GLOSSARY.md) defines the vocabulary;
 [ADRs](docs/adr/) record the decisions.

@@ -17,7 +17,7 @@ async function prose(): Promise<[string, string][]> {
   const docs = await readdir(join(ROOT, "docs"), { recursive: true })
   const files = [
     "README.md",
-    "CONTEXT.md",
+    "GLOSSARY.md",
     ...docs.filter((path) => path.endsWith(".md") && !path.startsWith("adr/")).map((path) => join("docs", path)),
   ]
   return Promise.all(files.map(async (file) => [file, await readFile(join(ROOT, file), "utf8")] as [string, string]))

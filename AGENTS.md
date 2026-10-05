@@ -6,7 +6,7 @@
   agent, harness, task lifecycle, or model concept lives here, and none may be
   added. Generic App ownership and hidden policies belong here. A program that needs those reads screens through `app.capture`
   and owns them itself.
-- `CONTEXT.md` is the glossary; use its terms in code, docs, and commits.
+- `GLOSSARY.md` is the glossary; use its terms in code, docs, and commits.
   [The decision index](docs/adr/README.md) links current and historical decisions, and a superseded record keeps the words it
   was written with rather than being rewritten.
 ## API and input contract
